@@ -1,0 +1,8 @@
+.DS_Store
+*.swp
+*.swo
+*.tmp
+coverage/
+test-output/
+dist/
+release/
