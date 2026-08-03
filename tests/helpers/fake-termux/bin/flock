@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+if [[ -n ${TLD_REAL_FLOCK:-} ]]; then
+  exec "$TLD_REAL_FLOCK" "$@"
+fi
+
+script_dir=${BASH_SOURCE[0]%/*}
+if [[ "$script_dir" == "${BASH_SOURCE[0]}" ]]; then
+  script_dir=.
+fi
+helper_dir=$(cd -- "$script_dir" 2>/dev/null && pwd -P) || {
+  printf '%s\n' 'flock shim: cannot resolve helper directory' >&2
+  exit 127
+}
+
+if [[ -x /usr/bin/flock ]]; then
+  exec /usr/bin/flock "$@"
+fi
+
+if [[ -n ${PREFIX:-} && -x "$PREFIX/bin/flock" ]]; then
+  exec "$PREFIX/bin/flock" "$@"
+fi
+
+old_ifs=$IFS
+IFS=:
+read -r -a path_entries <<< "${PATH:-}"
+IFS=$old_ifs
+for path_entry in "${path_entries[@]}"; do
+  path_entry=${path_entry:-.}
+  path_dir=$(cd -- "$path_entry" 2>/dev/null && pwd -P) || continue
+  [[ "$path_dir" == "$helper_dir" ]] && continue
+  candidate="$path_dir/flock"
+  if [[ -x "$candidate" ]]; then
+    exec "$candidate" "$@"
+  fi
+done
+
+if [[ "$#" -eq 1 && "${1-}" == '--version' ]]; then
+  printf '%s\n' 'flock test shim: no real implementation found'
+  exit 0
+fi
+printf '%s\n' 'flock test shim: real flock is required for lock operations' >&2
+exit 127
