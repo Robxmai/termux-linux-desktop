@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+if [[ -n ${TLD_TEST_CALL_LOG:-} ]]; then
+  {
+    printf 'pkg'
+    printf ' %s' "$@"
+    printf '\n'
+  } >> "$TLD_TEST_CALL_LOG"
+fi
+
+exit 0
