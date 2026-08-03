@@ -40,6 +40,16 @@ setup() {
   [[ "$output" == *"FAIL architecture=x86_64"* ]]
 }
 
+@test "tld_check_prerequisite_commands passes with the fake Termux commands" {
+  run tld_check_prerequisite_commands
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"PASS command=bash"* ]]
+  [[ "$output" == *"PASS command=pkg"* ]]
+  [[ "$output" == *"PASS command=proot-distro"* ]]
+  [[ "$output" == *"PASS command=pactl"* ]]
+}
+
 @test "tld_require_command reports an actionable missing command" {
   run tld_require_command tld-command-that-is-not-installed
 
@@ -65,6 +75,39 @@ setup() {
   run tld_check_storage 10240000 20480000
   [ "$status" -ne 0 ]
   [[ "$output" == FAIL* ]]
+}
+
+@test "tld_check_storage rejects invalid arguments and unavailable capacity" {
+  export TLD_STORAGE_PATH="$PREFIX"
+
+  run tld_check_storage invalid 20480
+  [ "$status" -ne 0 ]
+  [[ "$output" == FAIL* ]]
+
+  run tld_check_storage 20480 10240
+  [ "$status" -ne 0 ]
+  [[ "$output" == FAIL* ]]
+
+  export TLD_TEST_DF_KB=not-a-number
+  run tld_check_storage 10240 20480
+  [ "$status" -ne 0 ]
+  [[ "$output" == FAIL* ]]
+}
+
+@test "tld_check_x11_socket passes for an existing Unix socket" {
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c 'import socket, sys; sock = socket.socket(socket.AF_UNIX); sock.bind(sys.argv[1]); sock.close()' "$BATS_TEST_TMPDIR/X0"
+  elif command -v python >/dev/null 2>&1; then
+    python -c 'import socket, sys; sock = socket.socket(socket.AF_UNIX); sock.bind(sys.argv[1]); sock.close()' "$BATS_TEST_TMPDIR/X0"
+  else
+    skip "Python is unavailable for creating a Unix socket fixture"
+  fi
+  export TLD_X11_SOCKET="$BATS_TEST_TMPDIR/X0"
+
+  run tld_check_x11_socket
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == PASS* ]]
 }
 
 @test "tld_check_x11_socket warns in install mode" {

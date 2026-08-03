@@ -8,14 +8,25 @@ _tld_manifest_valid_key() {
   [[ "${1-}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]
 }
 
+_tld_manifest_has_unsupported_control() {
+  case "${1-}" in
+    *$'\x01'*|*$'\x02'*|*$'\x03'*|*$'\x04'*|*$'\x05'*|*$'\x06'*|*$'\x07'*|*$'\x08'*|*$'\x09'*|*$'\x0a'*|*$'\x0b'*|*$'\x0c'*|*$'\x0d'*|*$'\x0e'*|*$'\x0f'*|*$'\x10'*|*$'\x11'*|*$'\x12'*|*$'\x13'*|*$'\x14'*|*$'\x15'*|*$'\x16'*|*$'\x17'*|*$'\x18'*|*$'\x19'*|*$'\x1a'*|*$'\x1b'*|*$'\x1c'*|*$'\x1d'*|*$'\x1e'*|*$'\x1f'*|*$'\x7f'*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 tld_manifest_begin() {
   local action="${1-}"
   if [[ -z "$action" ]]; then
     printf '%s\n' 'manifest action is required' >&2
     return 1
   fi
-  if [[ "$action" == *$'\n'* || "$action" == *$'\r'* ]]; then
-    printf '%s\n' 'manifest action must be single-line' >&2
+  if _tld_manifest_has_unsupported_control "$action"; then
+    printf '%s\n' 'manifest action contains unsupported control characters' >&2
     return 1
   fi
 
@@ -39,8 +50,8 @@ tld_manifest_set() {
     printf '%s\n' 'manifest must be initialized with tld_manifest_begin first' >&2
     return 1
   fi
-  if [[ "$value" == *$'\n'* || "$value" == *$'\r'* ]]; then
-    printf 'manifest value must be single-line for key: %s\n' "$key" >&2
+  if _tld_manifest_has_unsupported_control "$value"; then
+    printf 'manifest value contains unsupported control characters for key: %s\n' "$key" >&2
     return 1
   fi
   TLD_MANIFEST_VALUES["$key"]="$value"

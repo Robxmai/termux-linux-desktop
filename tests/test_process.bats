@@ -29,10 +29,11 @@ setup() {
 }
 
 write_proc_tree() {
-  local start_ticks="${1:-12345}"
-  mkdir -p "$TLD_PROC_ROOT/$TLD_TEST_PID"
-  printf '4242 (fake-process) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 %s 20\n' "$start_ticks" > "$TLD_PROC_ROOT/$TLD_TEST_PID/stat"
-  printf '%s\0' bash -c 'echo desktop' > "$TLD_PROC_ROOT/$TLD_TEST_PID/cmdline"
+  local pid="${1:-$TLD_TEST_PID}"
+  local start_ticks="${2:-12345}"
+  mkdir -p "$TLD_PROC_ROOT/$pid"
+  printf '%s (fake-process) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 %s 20\n' "$pid" "$start_ticks" > "$TLD_PROC_ROOT/$pid/stat"
+  printf '%s\0' bash -c 'echo desktop' > "$TLD_PROC_ROOT/$pid/cmdline"
 }
 
 process_hash() {
@@ -40,8 +41,10 @@ process_hash() {
 }
 
 record_process() {
-  write_proc_tree
-  tld_process_record desktop "$TLD_TEST_PID" "$(process_hash)"
+  local role="${1:-desktop}"
+  local pid="${2:-$TLD_TEST_PID}"
+  write_proc_tree "$pid"
+  tld_process_record "$role" "$pid" "$(process_hash)"
 }
 
 @test "tld_process_record stores a valid owned process record" {
@@ -71,13 +74,53 @@ record_process() {
 
 @test "tld_process_stop prunes a record when the start tick changes" {
   record_process
-  write_proc_tree 99999
+  write_proc_tree "$TLD_TEST_PID" 99999
 
   run tld_process_stop desktop
 
   [ "$status" -ne 0 ]
   [ ! -e "$TLD_STATE_DIR/processes/desktop.env" ]
   [ ! -s "$TLD_TEST_KILL_LOG" ]
+}
+
+@test "tld_process_stop sends TERM then KILL only to an owned process" {
+  record_process
+
+  run tld_process_stop desktop
+
+  [ "$status" -eq 0 ]
+  grep -Fx -- '-TERM 4242' "$TLD_TEST_KILL_LOG"
+  grep -Fx -- '-KILL 4242' "$TLD_TEST_KILL_LOG"
+  [ ! -e "$TLD_STATE_DIR/processes/desktop.env" ]
+}
+
+@test "tld_process_stop_all stops and removes every owned record" {
+  record_process desktop 4242
+  record_process second 4343
+
+  run tld_process_stop_all
+
+  [ "$status" -eq 0 ]
+  grep -Fx -- '-TERM 4242' "$TLD_TEST_KILL_LOG"
+  grep -Fx -- '-KILL 4242' "$TLD_TEST_KILL_LOG"
+  grep -Fx -- '-TERM 4343' "$TLD_TEST_KILL_LOG"
+  grep -Fx -- '-KILL 4343' "$TLD_TEST_KILL_LOG"
+  [ ! -e "$TLD_STATE_DIR/processes/desktop.env" ]
+  [ ! -e "$TLD_STATE_DIR/processes/second.env" ]
+}
+
+@test "tld_process_stop does not signal an unrelated owned PID" {
+  record_process desktop 4242
+  record_process unrelated 4343
+
+  run tld_process_stop desktop
+
+  [ "$status" -eq 0 ]
+  grep -Fx -- '-TERM 4242' "$TLD_TEST_KILL_LOG"
+  grep -Fx -- '-KILL 4242' "$TLD_TEST_KILL_LOG"
+  ! grep -F '4343' "$TLD_TEST_KILL_LOG"
+  [ ! -e "$TLD_STATE_DIR/processes/desktop.env" ]
+  [ -e "$TLD_STATE_DIR/processes/unrelated.env" ]
 }
 
 @test "tld_process_stop prunes a command hash mismatch without signaling it" {

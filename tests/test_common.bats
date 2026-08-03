@@ -40,6 +40,34 @@ setup() {
   [ "$(<"$TLD_LOG_DIR/desktop.log")" = "$output" ]
 }
 
+@test "tld_die returns non-zero and emits an ERROR message" {
+  run tld_die "something went wrong"
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"ERROR: something went wrong"* ]]
+  grep -F "ERROR: something went wrong" "$TLD_LOG_DIR/desktop.log"
+}
+
+@test "sourcing tld-common.sh alone creates no directories or command activity" {
+  source_only="$BATS_TEST_TMPDIR/source-only"
+  source_path="$source_only/bin"
+  source_prefix="$source_only/prefix"
+  source_home="$source_only/home"
+  mkdir -p "$source_path"
+  export TLD_SOURCE_PATH="$source_path"
+  export TLD_SOURCE_PREFIX="$source_prefix"
+  export TLD_SOURCE_HOME="$source_home"
+
+  run bash -c 'set -Eeuo pipefail; export PATH="$TLD_SOURCE_PATH" PREFIX="$TLD_SOURCE_PREFIX" HOME="$TLD_SOURCE_HOME"; unset TLD_STATE_DIR TLD_LOG_DIR TLD_CONFIG_DIR TLD_INSTALL_DIR TLD_INSTANCE_FILE; source "$TLD_LIB_DIR/tld-common.sh"'
+
+  [ "$status" -eq 0 ]
+  [ ! -e "$source_prefix" ]
+  [ ! -e "$source_home" ]
+  [ ! -e "$source_only/state" ]
+  [ ! -e "$source_only/log" ]
+  [ ! -e "$source_only/config" ]
+}
+
 @test "tld_validate_name accepts a safe name" {
   run tld_validate_name "desktop_01-foo.bar"
 

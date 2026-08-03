@@ -72,6 +72,18 @@ setup() {
   [ ! -e "$marker" ]
 }
 
+@test "tld_manifest rejects control characters before serialization" {
+  local -a invalid_values=($'tab\tvalue' $'control\x01value' $'delete\x7fvalue')
+
+  tld_manifest_begin install
+
+  for value in "${invalid_values[@]}"; do
+    run tld_manifest_set PAYLOAD "$value"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"control"* ]]
+  done
+}
+
 @test "tld_manifest_begin records standard metadata" {
   manifest="$BATS_TEST_TMPDIR/manifest.env"
 
