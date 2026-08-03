@@ -15,7 +15,7 @@ setup() {
 
   mkdir -p "$HOME" "$PREFIX" "$TLD_STATE_DIR" "$TLD_LOG_DIR" "$TLD_CONFIG_DIR" "$TLD_TEST_BIN"
   printf '%s\n' '#!/usr/bin/env bash' 'printf "%s\n" "${TLD_TEST_ARCH:-aarch64}"' > "$TLD_TEST_BIN/uname"
-  printf '%s\n' '#!/usr/bin/env bash' 'printf "Filesystem 1024-blocks Used Available Capacity Mounted on\nfake 100 50 %s 50%% /\n" "${TLD_TEST_DF_KB:-0}"' > "$TLD_TEST_BIN/df"
+  printf '%s\n' '#!/usr/bin/env bash' 'printf "Filesystem 1024-blocks Used Available Capacity Mounted on\nfake 100 50 %s 50%% /\n" "${TLD_TEST_DF_KB:-0}"; exit "${TLD_TEST_DF_STATUS:-0}"' > "$TLD_TEST_BIN/df"
   chmod +x "$TLD_TEST_BIN/uname" "$TLD_TEST_BIN/df"
 
   source "$TLD_LIB_DIR/tld-common.sh"
@@ -92,6 +92,17 @@ setup() {
   run tld_check_storage 10240 20480
   [ "$status" -ne 0 ]
   [[ "$output" == FAIL* ]]
+}
+
+@test "tld_check_storage fails when df exits non-zero after valid output" {
+  export TLD_STORAGE_PATH="$PREFIX"
+  export TLD_TEST_DF_KB=40000
+  export TLD_TEST_DF_STATUS=7
+
+  run tld_check_storage 10240 20480
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"status=7"* ]]
 }
 
 @test "tld_check_x11_socket passes for an existing Unix socket" {

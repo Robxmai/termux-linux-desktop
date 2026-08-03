@@ -135,7 +135,7 @@ _tld_decode_env_value() {
       ((index += 1))
       continue
     fi
-    if [[ "$char" == '$' || "$char" == '`' || "$char" == ';' || "$char" == '&' || "$char" == '|' || "$char" == '<' || "$char" == '>' || "$char" == '(' || "$char" == ')' || "$char" == '{' || "$char" == '}' || "$char" == '[' || "$char" == ']' || "$char" == '*' || "$char" == '?' || "$char" == '~' || "$char" == '!' || "$char" == $'\t' || "$char" == ' ' ]]; then
+    if [[ "$char" == '$' || "$char" == '`' || "$char" == ';' || "$char" == '&' || "$char" == '|' || "$char" == '<' || "$char" == '>' || "$char" == '(' || "$char" == ')' || "$char" == '{' || "$char" == '}' || "$char" == '[' || "$char" == ']' || "$char" == '*' || "$char" == '?' || "$char" == '!' || "$char" == $'\t' || "$char" == ' ' ]]; then
       return 1
     fi
     decoded+="$char"

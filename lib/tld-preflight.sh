@@ -63,15 +63,21 @@ tld_check_storage() {
   local required_bytes="${1-}"
   local warning_bytes="${2-}"
   local storage_path="${TLD_STORAGE_PATH:-${PREFIX:-.}}"
-  local available_kb available_bytes
+  local available_kb available_bytes df_status
 
   if ! [[ "$required_bytes" =~ ^[0-9]+$ && "$warning_bytes" =~ ^[0-9]+$ && "$warning_bytes" -ge "$required_bytes" ]]; then
     printf '%s\n' 'FAIL storage thresholds are invalid; use numeric warning and required byte values'
     return 1
   fi
 
-  if ! available_kb=$(df -Pk "$storage_path" 2>/dev/null | awk 'NR == 2 { print $4; exit }'); then
-    printf 'FAIL storage could not be inspected at %s; check the mounted filesystem\n' "$storage_path"
+  if available_kb=$(
+    set -o pipefail
+    df -Pk "$storage_path" 2>/dev/null | awk 'NR == 2 { print $4; exit }'
+  ); then
+    :
+  else
+    df_status=$?
+    printf 'FAIL storage df failed with status=%s at %s; check the mounted filesystem\n' "$df_status" "$storage_path"
     return 1
   fi
   if ! [[ "$available_kb" =~ ^[0-9]+$ ]]; then

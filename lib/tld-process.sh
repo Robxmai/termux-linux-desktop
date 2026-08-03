@@ -134,9 +134,23 @@ _tld_process_load_record() {
   [[ -n "$TLD_PROCESS_COMMAND_HASH" && "$TLD_PROCESS_COMMAND_HASH" != *$'\n'* ]] || return 1
 }
 
+_tld_process_pid_state() {
+  local pid="${1-}"
+  local proc_root="${TLD_PROC_ROOT:-/proc}"
+  local pid_dir="$proc_root/$pid"
+
+  if [[ ! -e "$pid_dir" ]]; then
+    return 0
+  fi
+  if [[ ! -d "$pid_dir" || ! -r "$pid_dir/stat" ]]; then
+    return 3
+  fi
+  return 1
+}
+
 _tld_process_validate_owned() {
   local role="${1-}"
-  local record_file recorded_start recorded_hash current_start current_hash
+  local record_file recorded_start recorded_hash current_start current_hash pid_state
 
   record_file=$(_tld_process_record_path "$role") || return 1
   if ! _tld_process_load_record "$record_file" "$role"; then
@@ -144,19 +158,37 @@ _tld_process_validate_owned() {
   fi
   recorded_start="$TLD_PROCESS_START_TICKS"
   recorded_hash="$TLD_PROCESS_COMMAND_HASH"
+  if _tld_process_pid_state "$TLD_PROCESS_PID"; then
+    pid_state=0
+  else
+    pid_state=$?
+  fi
+  case "$pid_state" in
+    0)
+      return 1
+      ;;
+    3)
+      return 3
+      ;;
+    1)
+      ;;
+    *)
+      return 3
+      ;;
+  esac
   if ! _tld_process_get_start_ticks "$TLD_PROCESS_PID"; then
-    return 1
+    return 3
   fi
   current_start="$TLD_PROCESS_START_TICKS"
   if [[ "$current_start" != "$recorded_start" ]]; then
-    return 1
+    return 2
   fi
   if ! _tld_process_get_command_hash "${TLD_PROC_ROOT:-/proc}/$TLD_PROCESS_PID/cmdline"; then
-    return 1
+    return 3
   fi
   current_hash="$TLD_PROCESS_COMMAND_HASH"
   if [[ "$current_hash" != "$recorded_hash" ]]; then
-    return 1
+    return 2
   fi
   TLD_PROCESS_START_TICKS="$recorded_start"
   TLD_PROCESS_COMMAND_HASH="$recorded_hash"
@@ -167,20 +199,35 @@ _tld_process_owned_state() {
   local expected_start="${2-}"
   local expected_hash="${3-}"
   local proc_root="${TLD_PROC_ROOT:-/proc}"
-  local current_start current_hash
+  local current_start current_hash pid_state
 
-  if [[ ! -r "$proc_root/$pid/stat" ]]; then
-    return 0
+  if _tld_process_pid_state "$pid"; then
+    pid_state=0
+  else
+    pid_state=$?
   fi
+  case "$pid_state" in
+    0)
+      return 0
+      ;;
+    3)
+      return 3
+      ;;
+    1)
+      ;;
+    *)
+      return 3
+      ;;
+  esac
   if ! _tld_process_get_start_ticks "$pid"; then
-    return 2
+    return 3
   fi
   current_start="$TLD_PROCESS_START_TICKS"
   if [[ "$current_start" != "$expected_start" ]]; then
     return 2
   fi
   if ! _tld_process_get_command_hash "$proc_root/$pid/cmdline"; then
-    return 2
+    return 3
   fi
   current_hash="$TLD_PROCESS_COMMAND_HASH"
   if [[ "$current_hash" != "$expected_hash" ]]; then
@@ -195,17 +242,25 @@ _tld_process_prune_record() {
 
 _tld_process_prune_role() {
   local role="${1-}"
-  local record_file
+  local record_file state result=0
 
   _tld_process_lock_acquire "$role" || return 1
   record_file=$(_tld_process_record_path "$role") || {
     _tld_process_lock_release
     return 1
   }
-  if ! _tld_process_validate_owned "$role"; then
-    _tld_process_prune_record "$record_file" || true
+  if _tld_process_validate_owned "$role"; then
+    :
+  else
+    state=$?
+    if (( state == 3 )); then
+      result=1
+    elif ! _tld_process_prune_record "$record_file"; then
+      result=1
+    fi
   fi
   _tld_process_lock_release
+  return "$result"
 }
 
 tld_process_record() {
@@ -260,7 +315,7 @@ tld_process_record() {
 
 tld_process_is_owned() {
   local role="${1-}"
-  local record_file
+  local record_file state
   local result=1
 
   if ! tld_validate_name "$role"; then
@@ -276,7 +331,10 @@ tld_process_is_owned() {
   if _tld_process_validate_owned "$role"; then
     result=0
   else
-    _tld_process_prune_record "$record_file" || true
+    state=$?
+    if (( state != 3 )); then
+      _tld_process_prune_record "$record_file" || true
+    fi
   fi
   _tld_process_lock_release
   return "$result"
@@ -304,11 +362,14 @@ _tld_process_wait_for_termination() {
       2)
         return 2
         ;;
+      3)
+        return 3
+        ;;
       1)
         if (( SECONDS >= deadline )); then
           return 1
         fi
-        sleep "$poll_seconds" || return 2
+        sleep "$poll_seconds" || return 3
         ;;
       *)
         return 2
@@ -332,8 +393,13 @@ tld_process_stop() {
     _tld_process_lock_release
     return 1
   }
-  if ! _tld_process_validate_owned "$role"; then
-    _tld_process_prune_record "$record_file" || true
+  if _tld_process_validate_owned "$role"; then
+    :
+  else
+    state=$?
+    if (( state != 3 )); then
+      _tld_process_prune_record "$record_file" || true
+    fi
     _tld_process_lock_release
     return 1
   fi
@@ -348,6 +414,19 @@ tld_process_stop() {
   fi
 
   if ! kill -TERM "$pid" 2>/dev/null; then
+    if _tld_process_owned_state "$pid" "$expected_start" "$expected_hash"; then
+      state=0
+    else
+      state=$?
+    fi
+    if (( state == 0 )); then
+      _tld_process_prune_record "$record_file" || true
+      _tld_process_lock_release
+      return 0
+    fi
+    if (( state == 2 )); then
+      _tld_process_prune_record "$record_file" || true
+    fi
     _tld_process_lock_release
     return 1
   fi
@@ -363,6 +442,10 @@ tld_process_stop() {
     _tld_process_lock_release
     return 1
   fi
+  if (( state == 3 )); then
+    _tld_process_lock_release
+    return 1
+  fi
 
   if _tld_process_owned_state "$pid" "$expected_start" "$expected_hash"; then
     state=0
@@ -374,12 +457,29 @@ tld_process_stop() {
     _tld_process_lock_release
     return 0
   fi
-  if (( state != 1 )); then
+  if (( state == 2 )); then
     _tld_process_prune_record "$record_file" || true
     _tld_process_lock_release
     return 1
   fi
+  if (( state == 3 )); then
+    _tld_process_lock_release
+    return 1
+  fi
   if ! kill -KILL "$pid" 2>/dev/null; then
+    if _tld_process_owned_state "$pid" "$expected_start" "$expected_hash"; then
+      state=0
+    else
+      state=$?
+    fi
+    if (( state == 0 )); then
+      _tld_process_prune_record "$record_file" || true
+      _tld_process_lock_release
+      return 0
+    fi
+    if (( state == 2 )); then
+      _tld_process_prune_record "$record_file" || true
+    fi
     _tld_process_lock_release
     return 1
   fi
@@ -395,7 +495,7 @@ tld_process_stop() {
   else
     state=$?
   fi
-  if (( state != 1 )); then
+  if (( state == 2 )); then
     _tld_process_prune_record "$record_file" || true
   fi
   _tld_process_lock_release

@@ -13,6 +13,9 @@ setup() {
   export TLD_TEST_PID=4242
   export TLD_TEST_KILL_LOG="$BATS_TEST_TMPDIR/kill.log"
   export TLD_TEST_REMOVE_ON_KILL=1
+  export TLD_TEST_TERM_STATUS=0
+  export TLD_TEST_KILL_STATUS=0
+  export TLD_TEST_REMOVE_ON_TERM_FAILURE=0
   export TLD_PROCESS_WAIT_SECONDS=0
   export TLD_PROCESS_POLL_SECONDS=0
   export PATH="$BATS_TEST_DIRNAME/helpers/fake-termux/bin:$PATH"
@@ -22,10 +25,19 @@ setup() {
 
   kill() {
     printf '%s\n' "$*" >> "$TLD_TEST_KILL_LOG"
+    if [[ -n ${TLD_TEST_LOCK_HELD:-} && -e "$TLD_TEST_LOCK_HELD" ]]; then
+      return 99
+    fi
+    if [[ "${1-}" == '-TERM' && "${TLD_TEST_REMOVE_ON_TERM_FAILURE:-0}" == 1 ]]; then
+      rm -rf "$TLD_PROC_ROOT/${2-}"
+    fi
     if [[ "${1-}" == '-KILL' && "${TLD_TEST_REMOVE_ON_KILL:-1}" == 1 ]]; then
       rm -rf "$TLD_PROC_ROOT/${2-}"
     fi
-    return 0
+    if [[ "${1-}" == '-TERM' ]]; then
+      return "$TLD_TEST_TERM_STATUS"
+    fi
+    return "$TLD_TEST_KILL_STATUS"
   }
 
   source "$TLD_LIB_DIR/tld-common.sh"
@@ -97,6 +109,18 @@ record_process() {
   [ ! -s "$TLD_TEST_KILL_LOG" ]
 }
 
+@test "tld_process_stop preserves a record when proc stat is unreadable" {
+  record_process
+  rm -f "$TLD_PROC_ROOT/$TLD_TEST_PID/stat"
+  mkdir "$TLD_PROC_ROOT/$TLD_TEST_PID/stat"
+
+  run tld_process_stop desktop
+
+  [ "$status" -ne 0 ]
+  [ -e "$TLD_STATE_DIR/processes/desktop.env" ]
+  [ ! -s "$TLD_TEST_KILL_LOG" ]
+}
+
 @test "tld_process_stop sends TERM then KILL only to an owned process" {
   record_process
 
@@ -155,6 +179,76 @@ record_process() {
   [ "${signals[0]}" = '-TERM 4242' ]
   [ "${signals[1]}" = '-KILL 4242' ]
   [ -e "$TLD_STATE_DIR/processes/desktop.env" ]
+}
+
+@test "tld_process_stop returns success for a failed TERM after confirmed exit" {
+  export TLD_TEST_TERM_STATUS=1
+  export TLD_TEST_REMOVE_ON_TERM_FAILURE=1
+  record_process
+
+  run tld_process_stop desktop
+
+  [ "$status" -eq 0 ]
+  mapfile -t signals < "$TLD_TEST_KILL_LOG"
+  [ "${#signals[@]}" -eq 1 ]
+  [ "${signals[0]}" = '-TERM 4242' ]
+  [ ! -e "$TLD_STATE_DIR/processes/desktop.env" ]
+}
+
+@test "tld_process_stop preserves ownership when KILL fails" {
+  export TLD_TEST_KILL_STATUS=1
+  export TLD_TEST_REMOVE_ON_KILL=0
+  record_process
+
+  run tld_process_stop desktop
+
+  [ "$status" -ne 0 ]
+  mapfile -t signals < "$TLD_TEST_KILL_LOG"
+  [ "${#signals[@]}" -eq 2 ]
+  [ "${signals[0]}" = '-TERM 4242' ]
+  [ "${signals[1]}" = '-KILL 4242' ]
+  [ -e "$TLD_STATE_DIR/processes/desktop.env" ]
+}
+
+@test "tld_process_prune propagates record deletion failure" {
+  record_process
+  rm -rf "$TLD_PROC_ROOT/$TLD_TEST_PID"
+  rm() {
+    if [[ "${TLD_TEST_BLOCK_RM:-0}" == 1 && "$*" == *"desktop.env"* ]]; then
+      return 1
+    fi
+    command rm "$@"
+  }
+  export TLD_TEST_BLOCK_RM=1
+
+  run tld_process_prune
+
+  [ "$status" -ne 0 ]
+  [ -e "$TLD_STATE_DIR/processes/desktop.env" ]
+}
+
+@test "tld_process_stop waits for the per-role lock before signaling" {
+  record_process
+  lock_file="$TLD_STATE_DIR/processes/desktop.lock"
+  held="$BATS_TEST_TMPDIR/lock-held"
+  export TLD_TEST_LOCK_HELD="$held"
+  (
+    exec 9>"$lock_file"
+    flock -x 9
+    : > "$held"
+    sleep 0.2
+    rm -f "$held"
+  ) &
+  holder_pid=$!
+  while [ ! -e "$held" ]; do
+    sleep 0.01
+  done
+
+  run tld_process_stop desktop
+  wait "$holder_pid"
+
+  [ "$status" -eq 0 ]
+  [ ! -e "$TLD_STATE_DIR/processes/desktop.env" ]
 }
 
 @test "tld_process_stop prunes a command hash mismatch without signaling it" {

@@ -78,12 +78,14 @@ setup() {
 
   tld_manifest_begin install
   tld_manifest_set PAYLOAD "$value"
+  tld_manifest_set TILDE 'a~b'
   tld_manifest_commit "$manifest"
 
   run tld_manifest_require "$manifest" PAYLOAD "$value"
 
   [ "$status" -eq 0 ]
   [ ! -e "$marker" ]
+  tld_manifest_require "$manifest" TILDE 'a~b'
 }
 
 @test "tld_manifest rejects control characters before serialization" {
@@ -106,6 +108,28 @@ setup() {
 
   [ "$status" -ne 0 ]
   [[ "$output" == *"printable ASCII"* ]]
+}
+
+@test "tld_manifest rejects action control and non-ASCII values" {
+  run tld_manifest_begin $'install\tbad'
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"control"* ]]
+
+  run tld_manifest_begin $'caf\u00e9'
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"printable ASCII"* ]]
+}
+
+@test "manifest temporary and final files use private permissions" {
+  temporary=$(tld_manifest_make_temp "$BATS_TEST_TMPDIR/private.XXXXXX")
+  [ "$(stat -c '%a' "$temporary")" = 600 ]
+  rm -f -- "$temporary"
+
+  manifest="$BATS_TEST_TMPDIR/private-manifest.env"
+  tld_manifest_begin install
+  tld_manifest_set STATE ready
+  tld_manifest_commit "$manifest"
+  [ "$(stat -c '%a' "$manifest")" = 600 ]
 }
 
 @test "tld_manifest_begin records standard metadata" {
