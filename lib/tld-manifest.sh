@@ -92,7 +92,7 @@ tld_manifest_set() {
 tld_manifest_commit() {
   local file="${1-}"
   local temporary
-  local key
+  local key write_failed
 
   if [[ -z "$file" ]]; then
     printf '%s\n' 'manifest output file is required' >&2
@@ -112,9 +112,14 @@ tld_manifest_commit() {
     return 1
   fi
   if ! {
+    write_failed=0
     for key in "${!TLD_MANIFEST_VALUES[@]}"; do
-      printf '%s=%q\n' "$key" "${TLD_MANIFEST_VALUES[$key]}" || exit 1
+      if ! printf '%s=%q\n' "$key" "${TLD_MANIFEST_VALUES[$key]}"; then
+        write_failed=1
+        break
+      fi
     done
+    (( write_failed == 0 ))
   } > "$temporary"; then
     rm -f -- "$temporary" || true
     printf 'cannot write manifest temporary file: %s\n' "$temporary" >&2
@@ -145,8 +150,12 @@ tld_manifest_require() {
     set -- "$key" "$expected"
     unset ROLE PID START_TICKS COMMAND_HASH
     unset "${1}"
-    tld_read_env_file "$file" || exit 1
-    declare -p "$1" >/dev/null 2>&1 || exit 1
+    if ! tld_read_env_file "$file"; then
+      return 1
+    fi
+    if ! declare -p "$1" >/dev/null 2>&1; then
+      return 1
+    fi
     [[ "${!1}" == "$2" ]]
   ); then
     printf 'manifest requirement failed: %s expected %s=%s\n' "$file" "$key" "$expected" >&2

@@ -132,6 +132,32 @@ setup() {
   [ "$(stat -c '%a' "$manifest")" = 600 ]
 }
 
+@test "tld_manifest_commit preserves the active file when a write fails" {
+  manifest="$BATS_TEST_TMPDIR/manifest.env"
+  printf '%s\n' 'STATE=old' > "$manifest"
+  before_hash=$(sha256sum "$manifest" | awk '{print $1}')
+
+  tld_manifest_begin install
+  tld_manifest_set STATE new
+  printf() {
+    if [[ "${1-}" == '%s=%q\n' && "${2-}" == STATE ]]; then
+      return 73
+    fi
+    builtin printf "$@"
+  }
+
+  if tld_manifest_commit "$manifest"; then
+    false
+  fi
+  printf '%s\n' alive > "$BATS_TEST_TMPDIR/caller-alive"
+  unset -f printf
+
+  after_hash=$(sha256sum "$manifest" | awk '{print $1}')
+  [ "$after_hash" = "$before_hash" ]
+  [ "$(<"$BATS_TEST_TMPDIR/caller-alive")" = alive ]
+  ! compgen -G "$manifest.tmp.*" >/dev/null
+}
+
 @test "tld_manifest_begin records standard metadata" {
   manifest="$BATS_TEST_TMPDIR/manifest.env"
 

@@ -72,6 +72,7 @@ record_process() {
   grep -Fx 'PID=4242' "$TLD_STATE_DIR/processes/desktop.env"
   grep -Fx 'START_TICKS=12345' "$TLD_STATE_DIR/processes/desktop.env"
   grep -Fx "COMMAND_HASH=$(process_hash)" "$TLD_STATE_DIR/processes/desktop.env"
+  [ "$(stat -c '%a' "$TLD_STATE_DIR/processes/desktop.env")" = 600 ]
 
   run tld_process_is_owned desktop
 
@@ -87,14 +88,37 @@ record_process() {
   [ "$status" -eq 0 ]
 }
 
-@test "tld_process_stop prunes a stale PID without signaling it" {
+@test "tld_process_stop treats an initially missing PID as already stopped" {
   record_process
   rm -rf "$TLD_PROC_ROOT/$TLD_TEST_PID"
 
   run tld_process_stop desktop
 
-  [ "$status" -ne 0 ]
+  [ "$status" -eq 0 ]
   [ ! -e "$TLD_STATE_DIR/processes/desktop.env" ]
+  [ ! -s "$TLD_TEST_KILL_LOG" ]
+}
+
+@test "tld_process_stop preserves a record when the proc root is missing" {
+  record_process
+  rm -rf "$TLD_PROC_ROOT"
+
+  run tld_process_stop desktop
+
+  [ "$status" -ne 0 ]
+  [ -e "$TLD_STATE_DIR/processes/desktop.env" ]
+  [ ! -s "$TLD_TEST_KILL_LOG" ]
+}
+
+@test "tld_process_stop preserves a record when the proc root is not a directory" {
+  record_process
+  rm -rf "$TLD_PROC_ROOT"
+  printf '%s\n' 'not a proc root' > "$TLD_PROC_ROOT"
+
+  run tld_process_stop desktop
+
+  [ "$status" -ne 0 ]
+  [ -e "$TLD_STATE_DIR/processes/desktop.env" ]
   [ ! -s "$TLD_TEST_KILL_LOG" ]
 }
 
@@ -119,6 +143,41 @@ record_process() {
   [ "$status" -ne 0 ]
   [ -e "$TLD_STATE_DIR/processes/desktop.env" ]
   [ ! -s "$TLD_TEST_KILL_LOG" ]
+}
+
+@test "tld_process_stop preserves a record when proc cmdline is missing" {
+  record_process
+  rm -f "$TLD_PROC_ROOT/$TLD_TEST_PID/cmdline"
+
+  run tld_process_stop desktop
+
+  [ "$status" -ne 0 ]
+  [ -e "$TLD_STATE_DIR/processes/desktop.env" ]
+  [ ! -s "$TLD_TEST_KILL_LOG" ]
+}
+
+@test "tld_process_record preserves the active record when a write fails" {
+  process_hash_value=$(process_hash)
+  record_process
+  record_file="$TLD_STATE_DIR/processes/desktop.env"
+  before_hash=$(sha256sum "$record_file" | awk '{print $1}')
+
+  printf() {
+    if [[ "${1-}" == 'PID=%q\n' ]]; then
+      return 73
+    fi
+    builtin printf "$@"
+  }
+
+  if tld_process_record desktop "$TLD_TEST_PID" "$process_hash_value"; then
+    false
+  fi
+  unset -f printf
+
+  after_hash=$(sha256sum "$record_file" | awk '{print $1}')
+  [ "$after_hash" = "$before_hash" ]
+  [ -f "$record_file" ]
+  ! compgen -G "$record_file.tmp.*" >/dev/null
 }
 
 @test "tld_process_stop sends TERM then KILL only to an owned process" {
@@ -224,6 +283,23 @@ record_process() {
   run tld_process_prune
 
   [ "$status" -ne 0 ]
+  [ -e "$TLD_STATE_DIR/processes/desktop.env" ]
+}
+
+@test "tld_process_stop propagates record deletion failure" {
+  record_process
+  rm -rf "$TLD_PROC_ROOT/$TLD_TEST_PID"
+  rm() {
+    if [[ "$*" == *"desktop.env"* ]]; then
+      return 73
+    fi
+    command rm "$@"
+  }
+
+  run tld_process_stop desktop
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"stale process record"* ]]
   [ -e "$TLD_STATE_DIR/processes/desktop.env" ]
 }
 
