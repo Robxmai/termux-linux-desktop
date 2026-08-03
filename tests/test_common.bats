@@ -119,3 +119,87 @@ setup() {
   run tld_read_env_file "$env_file"
   [ "$status" -ne 0 ]
 }
+
+@test "tld_read_env_file propagates readonly assignment failures" {
+  env_file="$BATS_TEST_TMPDIR/readonly.env"
+  printf '%s\n' 'TLD_READONLY=changed' 'SAFE=ok' > "$env_file"
+  readonly TLD_READONLY=original
+
+  run tld_read_env_file "$env_file"
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"cannot assign environment variable"* ]]
+}
+
+@test "all public library functions run under strict mode" {
+  smoke="$BATS_TEST_TMPDIR/strict-smoke.sh"
+  cat > "$smoke" <<'EOF'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+export HOME="$BATS_TEST_TMPDIR/smoke-home"
+export PREFIX="$BATS_TEST_TMPDIR/smoke-prefix"
+export TLD_STATE_DIR="$BATS_TEST_TMPDIR/smoke-state"
+export TLD_LOG_DIR="$BATS_TEST_TMPDIR/smoke-log"
+export TLD_CONFIG_DIR="$BATS_TEST_TMPDIR/smoke-config"
+export TLD_INSTALL_DIR="$BATS_TEST_TMPDIR/smoke-install"
+export TLD_INSTANCE_FILE="$TLD_STATE_DIR/instance.env"
+mkdir -p "$HOME" "$PREFIX" "$TLD_STATE_DIR" "$TLD_LOG_DIR" "$TLD_CONFIG_DIR"
+
+source "$TLD_LIB_DIR/tld-common.sh"
+source "$TLD_LIB_DIR/tld-preflight.sh"
+source "$TLD_LIB_DIR/tld-manifest.sh"
+source "$TLD_LIB_DIR/tld-process.sh"
+
+tld_init_paths
+tld_log smoke
+if tld_die smoke; then
+  exit 1
+fi
+tld_require_command bash
+tld_validate_name smoke
+tld_is_true true
+printf '%s\n' 'SAFE=value' > "$BATS_TEST_TMPDIR/smoke.env"
+tld_read_env_file "$BATS_TEST_TMPDIR/smoke.env"
+
+tld_check_architecture || true
+tld_check_host_prerequisites || true
+tld_check_prerequisite_commands
+tld_check_storage 0 1
+export TLD_X11_SOCKET="$BATS_TEST_TMPDIR/missing-X0" TLD_X11_MODE=install
+tld_check_x11_socket
+export TLD_X11_MODE=start
+if tld_check_x11_socket; then
+  exit 1
+fi
+
+manifest="$BATS_TEST_TMPDIR/smoke-manifest.env"
+tld_manifest_begin install
+tld_manifest_set PAYLOAD 'value with spaces $(not-run)'
+tld_manifest_commit "$manifest"
+tld_manifest_require "$manifest" PAYLOAD 'value with spaces $(not-run)'
+
+export TLD_PROC_ROOT="$BATS_TEST_TMPDIR/smoke-proc"
+export TLD_PROCESS_WAIT_SECONDS=0 TLD_PROCESS_KILL_WAIT_SECONDS=0 TLD_PROCESS_POLL_SECONDS=0
+pid=4242
+mkdir -p "$TLD_PROC_ROOT/$pid"
+printf '%s\n' '4242 (fake-process) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 12345 20' > "$TLD_PROC_ROOT/$pid/stat"
+printf '%s\0' bash -c 'echo desktop' > "$TLD_PROC_ROOT/$pid/cmdline"
+process_hash=$(printf '%s\0' bash -c 'echo desktop' | tr '\0' '\n' | sha256sum | awk '{print $1}')
+tld_process_record desktop "$pid" "$process_hash"
+tld_process_is_owned desktop
+kill() {
+  if [[ "${1-}" == '-KILL' ]]; then
+    rm -rf "$TLD_PROC_ROOT/${2-}"
+  fi
+  return 0
+}
+tld_process_stop desktop
+tld_process_stop_all
+tld_process_prune
+EOF
+  chmod +x "$smoke"
+  run env "BATS_TEST_TMPDIR=$BATS_TEST_TMPDIR" "TLD_LIB_DIR=$TLD_LIB_DIR" "PATH=$PATH" "$smoke"
+
+  [ "$status" -eq 0 ]
+}

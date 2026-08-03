@@ -29,6 +29,20 @@ setup() {
   grep -Fx 'STATE=new' "$manifest"
   ! grep -Fx 'STATE=old' "$manifest"
   [ ! -e "$manifest.tmp" ]
+  ! compgen -G "$manifest.tmp.*" >/dev/null
+}
+
+@test "tld_manifest_commit preserves the active file when the target is invalid" {
+  active="$BATS_TEST_TMPDIR/active.env"
+  printf '%s\n' 'STATE=old' > "$active"
+
+  tld_manifest_begin install
+  tld_manifest_set STATE new
+  run tld_manifest_commit "$active/"
+
+  [ "$status" -ne 0 ]
+  [ "$(<"$active")" = "STATE=old" ]
+  ! compgen -G "$active/.tmp.*" >/dev/null
 }
 
 @test "tld_manifest_require succeeds for an expected key" {
@@ -82,6 +96,16 @@ setup() {
     [ "$status" -ne 0 ]
     [[ "$output" == *"control"* ]]
   done
+}
+
+@test "tld_manifest rejects non-ASCII values before serialization" {
+  tld_manifest_begin install
+  value=$'caf\u00e9'
+
+  run tld_manifest_set PAYLOAD "$value"
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"printable ASCII"* ]]
 }
 
 @test "tld_manifest_begin records standard metadata" {

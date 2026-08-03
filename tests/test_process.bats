@@ -12,6 +12,7 @@ setup() {
   export TLD_PROC_ROOT="$BATS_TEST_TMPDIR/proc"
   export TLD_TEST_PID=4242
   export TLD_TEST_KILL_LOG="$BATS_TEST_TMPDIR/kill.log"
+  export TLD_TEST_REMOVE_ON_KILL=1
   export TLD_PROCESS_WAIT_SECONDS=0
   export TLD_PROCESS_POLL_SECONDS=0
   export PATH="$BATS_TEST_DIRNAME/helpers/fake-termux/bin:$PATH"
@@ -21,6 +22,9 @@ setup() {
 
   kill() {
     printf '%s\n' "$*" >> "$TLD_TEST_KILL_LOG"
+    if [[ "${1-}" == '-KILL' && "${TLD_TEST_REMOVE_ON_KILL:-1}" == 1 ]]; then
+      rm -rf "$TLD_PROC_ROOT/${2-}"
+    fi
     return 0
   }
 
@@ -31,8 +35,9 @@ setup() {
 write_proc_tree() {
   local pid="${1:-$TLD_TEST_PID}"
   local start_ticks="${2:-12345}"
+  local comm="${3:-fake-process}"
   mkdir -p "$TLD_PROC_ROOT/$pid"
-  printf '%s (fake-process) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 %s 20\n' "$pid" "$start_ticks" > "$TLD_PROC_ROOT/$pid/stat"
+  printf '%s (%s) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 %s 20\n' "$pid" "$comm" "$start_ticks" > "$TLD_PROC_ROOT/$pid/stat"
   printf '%s\0' bash -c 'echo desktop' > "$TLD_PROC_ROOT/$pid/cmdline"
 }
 
@@ -58,6 +63,15 @@ record_process() {
 
   run tld_process_is_owned desktop
 
+  [ "$status" -eq 0 ]
+}
+
+@test "tld_process_record parses a comm containing a closing delimiter" {
+  write_proc_tree "$TLD_TEST_PID" 12345 'fake) process'
+  tld_process_record desktop "$TLD_TEST_PID" "$(process_hash)"
+
+  grep -Fx 'START_TICKS=12345' "$TLD_STATE_DIR/processes/desktop.env"
+  run tld_process_is_owned desktop
   [ "$status" -eq 0 ]
 }
 
@@ -89,8 +103,10 @@ record_process() {
   run tld_process_stop desktop
 
   [ "$status" -eq 0 ]
-  grep -Fx -- '-TERM 4242' "$TLD_TEST_KILL_LOG"
-  grep -Fx -- '-KILL 4242' "$TLD_TEST_KILL_LOG"
+  mapfile -t signals < "$TLD_TEST_KILL_LOG"
+  [ "${#signals[@]}" -eq 2 ]
+  [ "${signals[0]}" = '-TERM 4242' ]
+  [ "${signals[1]}" = '-KILL 4242' ]
   [ ! -e "$TLD_STATE_DIR/processes/desktop.env" ]
 }
 
@@ -101,10 +117,12 @@ record_process() {
   run tld_process_stop_all
 
   [ "$status" -eq 0 ]
-  grep -Fx -- '-TERM 4242' "$TLD_TEST_KILL_LOG"
-  grep -Fx -- '-KILL 4242' "$TLD_TEST_KILL_LOG"
-  grep -Fx -- '-TERM 4343' "$TLD_TEST_KILL_LOG"
-  grep -Fx -- '-KILL 4343' "$TLD_TEST_KILL_LOG"
+  mapfile -t signals < "$TLD_TEST_KILL_LOG"
+  [ "${#signals[@]}" -eq 4 ]
+  [ "${signals[0]}" = '-TERM 4242' ]
+  [ "${signals[1]}" = '-KILL 4242' ]
+  [ "${signals[2]}" = '-TERM 4343' ]
+  [ "${signals[3]}" = '-KILL 4343' ]
   [ ! -e "$TLD_STATE_DIR/processes/desktop.env" ]
   [ ! -e "$TLD_STATE_DIR/processes/second.env" ]
 }
@@ -116,11 +134,27 @@ record_process() {
   run tld_process_stop desktop
 
   [ "$status" -eq 0 ]
-  grep -Fx -- '-TERM 4242' "$TLD_TEST_KILL_LOG"
-  grep -Fx -- '-KILL 4242' "$TLD_TEST_KILL_LOG"
+  mapfile -t signals < "$TLD_TEST_KILL_LOG"
+  [ "${#signals[@]}" -eq 2 ]
+  [ "${signals[0]}" = '-TERM 4242' ]
+  [ "${signals[1]}" = '-KILL 4242' ]
   ! grep -F '4343' "$TLD_TEST_KILL_LOG"
   [ ! -e "$TLD_STATE_DIR/processes/desktop.env" ]
   [ -e "$TLD_STATE_DIR/processes/unrelated.env" ]
+}
+
+@test "tld_process_stop fails when an owned process remains alive after KILL" {
+  export TLD_TEST_REMOVE_ON_KILL=0
+  record_process
+
+  run tld_process_stop desktop
+
+  [ "$status" -ne 0 ]
+  mapfile -t signals < "$TLD_TEST_KILL_LOG"
+  [ "${#signals[@]}" -eq 2 ]
+  [ "${signals[0]}" = '-TERM 4242' ]
+  [ "${signals[1]}" = '-KILL 4242' ]
+  [ -e "$TLD_STATE_DIR/processes/desktop.env" ]
 }
 
 @test "tld_process_stop prunes a command hash mismatch without signaling it" {

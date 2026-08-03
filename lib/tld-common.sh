@@ -177,6 +177,9 @@ tld_read_env_file() {
   done < "$file"
 
   for key in "${!parsed[@]}"; do
-    declare -g -- "$key=${parsed[$key]}"
+    if ! declare -g -- "$key=${parsed[$key]}"; then
+      printf 'cannot assign environment variable: %s\n' "$key" >&2
+      return 1
+    fi
   done
 }

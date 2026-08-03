@@ -19,6 +19,30 @@ _tld_manifest_has_unsupported_control() {
   esac
 }
 
+_tld_manifest_has_non_ascii() {
+  local LC_ALL=C
+  local non_ascii_pattern='[^ -~]'
+  [[ "${1-}" =~ $non_ascii_pattern ]]
+}
+
+_tld_manifest_make_temp() {
+  local template="${1-}"
+  local old_umask temporary
+
+  old_umask=$(umask)
+  umask 077
+  if ! temporary=$(mktemp "$template"); then
+    umask "$old_umask"
+    return 1
+  fi
+  umask "$old_umask"
+  if ! chmod 600 "$temporary"; then
+    rm -f -- "$temporary" || true
+    return 1
+  fi
+  printf '%s\n' "$temporary"
+}
+
 tld_manifest_begin() {
   local action="${1-}"
   if [[ -z "$action" ]]; then
@@ -27,6 +51,10 @@ tld_manifest_begin() {
   fi
   if _tld_manifest_has_unsupported_control "$action"; then
     printf '%s\n' 'manifest action contains unsupported control characters' >&2
+    return 1
+  fi
+  if _tld_manifest_has_non_ascii "$action"; then
+    printf '%s\n' 'manifest action must contain printable ASCII only' >&2
     return 1
   fi
 
@@ -54,6 +82,10 @@ tld_manifest_set() {
     printf 'manifest value contains unsupported control characters for key: %s\n' "$key" >&2
     return 1
   fi
+  if _tld_manifest_has_non_ascii "$value"; then
+    printf 'manifest value must contain printable ASCII only for key: %s\n' "$key" >&2
+    return 1
+  fi
   TLD_MANIFEST_VALUES["$key"]="$value"
 }
 
@@ -70,10 +102,13 @@ tld_manifest_commit() {
     printf '%s\n' 'manifest must be initialized with tld_manifest_begin first' >&2
     return 1
   fi
+  if [[ -L "$file" || ( -e "$file" && ! -f "$file" ) ]]; then
+    printf 'manifest target is not a regular file: %s\n' "$file" >&2
+    return 1
+  fi
 
-  temporary="$file.tmp"
-  if ! rm -f -- "$temporary"; then
-    printf 'cannot clear manifest temporary file: %s\n' "$temporary" >&2
+  if ! temporary=$(_tld_manifest_make_temp "$file.tmp.XXXXXXXXXX"); then
+    printf 'cannot create manifest temporary file beside: %s\n' "$file" >&2
     return 1
   fi
   if ! {
@@ -81,12 +116,17 @@ tld_manifest_commit() {
       printf '%s=%q\n' "$key" "${TLD_MANIFEST_VALUES[$key]}" || exit 1
     done
   } > "$temporary"; then
-    rm -f -- "$temporary"
+    rm -f -- "$temporary" || true
     printf 'cannot write manifest temporary file: %s\n' "$temporary" >&2
     return 1
   fi
+  if [[ -L "$file" || ( -e "$file" && ! -f "$file" ) ]]; then
+    rm -f -- "$temporary" || true
+    printf 'manifest target changed to a non-regular file: %s\n' "$file" >&2
+    return 1
+  fi
   if ! mv -f -- "$temporary" "$file"; then
-    rm -f -- "$temporary"
+    rm -f -- "$temporary" || true
     printf 'cannot atomically install manifest: %s\n' "$file" >&2
     return 1
   fi
