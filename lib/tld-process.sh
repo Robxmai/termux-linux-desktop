@@ -136,13 +136,17 @@ _tld_process_load_record() {
   [[ -n "$TLD_PROCESS_COMMAND_HASH" && "$TLD_PROCESS_COMMAND_HASH" != *$'\n'* ]] || return 1
 }
 
-_tld_process_proc_root_state() {
-  local proc_root="${TLD_PROC_ROOT:-/proc}"
+_tld_process_directory_access_state() {
+  local directory="${1-}"
 
-  if [[ ! -d "$proc_root" || ! -r "$proc_root" ]]; then
+  if [[ ! -d "$directory" || ! -r "$directory" || ! -x "$directory" ]]; then
     return 3
   fi
   return 0
+}
+
+_tld_process_proc_root_state() {
+  _tld_process_directory_access_state "${TLD_PROC_ROOT:-/proc}"
 }
 
 _tld_process_pid_state() {
@@ -156,7 +160,7 @@ _tld_process_pid_state() {
   if [[ ! -e "$pid_dir" ]]; then
     return 0
   fi
-  if [[ ! -d "$pid_dir" || ! -r "$pid_dir/stat" ]]; then
+  if ! _tld_process_directory_access_state "$pid_dir" || [[ ! -r "$pid_dir/stat" ]]; then
     return 3
   fi
   return 1

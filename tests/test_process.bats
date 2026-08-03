@@ -122,6 +122,18 @@ record_process() {
   [ ! -s "$TLD_TEST_KILL_LOG" ]
 }
 
+@test "tld_process_stop preserves a record when the proc root lacks search access" {
+  record_process
+  chmod 0444 "$TLD_PROC_ROOT"
+
+  run tld_process_stop desktop
+  chmod 0755 "$TLD_PROC_ROOT"
+
+  [ "$status" -ne 0 ]
+  [ -e "$TLD_STATE_DIR/processes/desktop.env" ]
+  [ ! -s "$TLD_TEST_KILL_LOG" ]
+}
+
 @test "tld_process_stop prunes a record when the start tick changes" {
   record_process
   write_proc_tree "$TLD_TEST_PID" 99999
