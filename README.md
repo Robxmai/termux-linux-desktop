@@ -18,8 +18,12 @@ legally entitled to use.
 ## Prerequisites
 
 - An ARM64 Android device with sufficient storage, memory, and sustained power.
-- A supported Android release and a current Termux installation.
-- Termux:X11 installed from the same trusted distribution source as Termux.
+- Android 11 or newer; this is the validated baseline for v0.1.
+- Termux and the Termux:X11 Android app installed from matching trusted
+  sources: either F-Droid for both or official GitHub releases for both. Do
+  not mix sources.
+- Termux:X11 requires both the Android Termux:X11 app and its matching
+  `termux-x11-nightly` companion package inside Termux.
 - Network access for package installation and updates.
 - A backup of any personal configuration before recovery or reinstallation.
 
@@ -84,4 +88,6 @@ hardware details expected in a contribution.
 
 ## License
 
-This project is distributed under the [Apache License 2.0](LICENSE).
+The [Apache License 2.0](LICENSE) covers original materials in this repository
+only. Termux, XFCE, Ubuntu, Wine, and other dependencies retain their own
+licenses.

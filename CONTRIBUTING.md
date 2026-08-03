@@ -22,11 +22,13 @@ no-root ARM64 Android devices.
 - Remove account sign-in material and internal network details from diagnostic
   output.
 
-Example commands, adjusted to the repository's available paths:
+Run these checks before submission:
 
 ```sh
-shellcheck path/to/changed-script.sh
-bats path/to/tests
+shellcheck bin/* lib/*
+bats tests
+bash tests/test_scripts.sh
+shfmt -d bin lib tests
 git diff --check
 ```
 
