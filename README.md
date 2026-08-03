@@ -25,8 +25,7 @@ legally entitled to use.
 
 ## First Run
 
-Run the first four commands in Termux. Run the remaining commands inside the
-new Debian PRoot environment:
+Run these commands from the Termux host:
 
 ```sh
 pkg update && pkg upgrade
@@ -34,6 +33,12 @@ pkg install x11-repo proot-distro termux-x11-nightly
 proot-distro install debian
 termux-x11 :0 &
 proot-distro login debian --shared-tmp
+```
+
+After `proot-distro login debian --shared-tmp` opens the Debian PRoot guest,
+run these commands inside the guest:
+
+```sh
 apt update
 apt install xfce4 dbus-x11
 export DISPLAY=:0
