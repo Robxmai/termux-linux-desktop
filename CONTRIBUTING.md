@@ -11,6 +11,8 @@ no-root ARM64 Android devices.
   unrelated refactors.
 - Keep scripts and documentation portable across supported Termux and PRoot
   environments.
+- Keep the standard Termux core utilities, including `flock`, available; the
+  process ownership lock requires `flock`.
 
 ## Checks Before Submission
 

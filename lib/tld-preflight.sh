@@ -21,7 +21,7 @@ tld_check_architecture() {
 tld_check_prerequisite_commands() {
   local command_name
   local result=0
-  for command_name in bash pkg proot-distro pactl; do
+  for command_name in bash pkg proot-distro pactl flock; do
     if tld_require_command "$command_name" >/dev/null 2>&1; then
       printf 'PASS command=%s\n' "$command_name"
     else

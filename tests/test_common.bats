@@ -40,6 +40,16 @@ setup() {
   [ "$(<"$TLD_LOG_DIR/desktop.log")" = "$output" ]
 }
 
+@test "tld_log returns nonzero when the log directory is a regular file" {
+  TLD_LOG_DIR="$BATS_TEST_TMPDIR/log-file"
+  export TLD_LOG_DIR
+  : > "$TLD_LOG_DIR"
+
+  run tld_log "cannot write"
+
+  [ "$status" -ne 0 ]
+}
+
 @test "tld_die returns non-zero and emits an ERROR message" {
   run tld_die "something went wrong"
 

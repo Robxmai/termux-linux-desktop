@@ -24,6 +24,8 @@ legally entitled to use.
   not mix sources.
 - Termux:X11 requires both the Android Termux:X11 app and its matching
   `termux-x11-nightly` companion package inside Termux.
+- The standard Termux core utilities must include `flock`; it is required for
+  process ownership locking.
 - Network access for package installation and updates.
 - A backup of any personal configuration before recovery or reinstallation.
 
@@ -34,6 +36,7 @@ Run these commands from the Termux host:
 ```sh
 pkg update && pkg upgrade
 pkg install x11-repo proot-distro termux-x11-nightly
+command -v flock
 proot-distro install debian
 termux-x11 :0 &
 proot-distro login debian --shared-tmp

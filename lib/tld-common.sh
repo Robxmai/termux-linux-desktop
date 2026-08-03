@@ -27,7 +27,9 @@ tld_log() {
   local log_dir="${TLD_LOG_DIR:?TLD_LOG_DIR must be initialized before logging}"
   local line
   printf -v line '[%s] %s' "$(date '+%H:%M:%S')" "$*"
-  printf '%s\n' "$line" >> "$log_dir/desktop.log"
+  if ! printf '%s\n' "$line" >> "$log_dir/desktop.log"; then
+    return 1
+  fi
   printf '%s\n' "$line"
 }
 

@@ -48,6 +48,7 @@ setup() {
   [[ "$output" == *"PASS command=pkg"* ]]
   [[ "$output" == *"PASS command=proot-distro"* ]]
   [[ "$output" == *"PASS command=pactl"* ]]
+  [[ "$output" == *"PASS command=flock"* ]]
 }
 
 @test "tld_require_command reports an actionable missing command" {
