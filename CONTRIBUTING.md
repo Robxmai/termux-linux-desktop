@@ -25,10 +25,10 @@ no-root ARM64 Android devices.
 Run these checks before submission:
 
 ```sh
-shellcheck bin/* lib/*
-bats tests
-bash tests/test_scripts.sh
-shfmt -d bin lib tests
+git ls-files 'bin/*' 'lib/*' | grep -E '\.sh$' | xargs -r shellcheck
+git ls-files 'tests/*.bats' | xargs -r bats
+test ! -f tests/test_scripts.sh || bash tests/test_scripts.sh
+git ls-files 'bin/*' 'lib/*' 'tests/*' | xargs -r shfmt -d
 git diff --check
 ```
 

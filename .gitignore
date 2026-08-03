@@ -13,6 +13,6 @@ release/
 .cache/
 acceptance/
 .env.local
-.env.*
+.env.*.local
 *.pem
 *.key
