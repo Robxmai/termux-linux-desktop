@@ -1,0 +1,201 @@
+#!/data/data/com.termux/files/usr/bin/bash
+set -Eeuo pipefail
+
+if ! TLD_SCRIPT_PATH=$(readlink -f -- "${BASH_SOURCE[0]}"); then
+  printf '%s\n' 'FAIL cannot resolve desktop installer path' >&2
+  exit 1
+fi
+TLD_SCRIPT_DIR=${TLD_SCRIPT_PATH%/*}
+TLD_TOOLKIT_ROOT=${TLD_SCRIPT_DIR%/bin}
+
+[[ -n ${PREFIX:-} ]] || {
+  printf '%s\n' 'FAIL PREFIX is unset' >&2
+  exit 1
+}
+[[ -n ${HOME:-} ]] || {
+  printf '%s\n' 'FAIL HOME is unset' >&2
+  exit 1
+}
+
+source "$TLD_TOOLKIT_ROOT/lib/tld-common.sh"
+source "$TLD_TOOLKIT_ROOT/lib/tld-preflight.sh"
+source "$TLD_TOOLKIT_ROOT/lib/tld-manifest.sh"
+source "$TLD_TOOLKIT_ROOT/lib/tld-guest.sh"
+
+TLD_INSTALL_STAGE=initialization
+TLD_INSTALL_RESULT_FILE=''
+TLD_X11_SOCKET_READY=0
+TLD_X11_COMPANION_READY=0
+
+tld_install_write_failure() {
+  local stage="$1"
+  local result="$2"
+  local message="$3"
+
+  if [[ -n ${TLD_INSTALL_RESULT_FILE:-} ]]; then
+    if tld_manifest_begin failure &&
+      tld_manifest_set result failure &&
+      tld_manifest_set status "$result" &&
+      tld_manifest_set stage "$stage" &&
+      tld_manifest_set message "$message"; then
+      tld_manifest_commit "$TLD_INSTALL_RESULT_FILE" || true
+    fi
+  fi
+  tld_log "install failure stage=$stage status=$result message=$message" || true
+  printf 'FAIL install stage=%s status=%s: %s\n' "$stage" "$result" "$message" >&2
+}
+
+tld_install_fail() {
+  local stage="$1"
+  local result="$2"
+  local message="$3"
+  tld_install_write_failure "$stage" "$result" "$message"
+  return "$result"
+}
+
+tld_install_dependencies_missing() {
+  local command_name
+  for command_name in proot-distro pactl; do
+    if ! command -v "$command_name" >/dev/null 2>&1; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+tld_install_main() {
+  local result architecture
+
+  TLD_INSTALL_STAGE=initialization
+  if ! tld_init_managed_paths; then
+    printf '%s\n' 'FAIL cannot initialize managed toolkit paths' >&2
+    return 1
+  fi
+  TLD_INSTALL_RESULT_FILE="$TLD_STATE_DIR/install.result"
+
+  if [[ "${TLD_TEST_MODE:-0}" != 1 ]]; then
+    TLD_ROOTFS_ENV_FILE="$TLD_TOOLKIT_ROOT/rootfs/ubuntu-24.04.env"
+    TLD_X11_SOCKET="$PREFIX/tmp/.X11-unix/X0"
+  fi
+  TLD_X11_MODE=install
+
+  TLD_INSTALL_STAGE=host-preflight
+  if tld_check_host_prerequisites install; then
+    :
+  else
+    result=$?
+    tld_install_fail "$TLD_INSTALL_STAGE" "$result" 'host preflight failed'
+    return "$result"
+  fi
+
+  TLD_INSTALL_STAGE=x11-prerequisites
+  if tld_check_x11_companion; then
+    if command -v termux-x11 >/dev/null 2>&1; then
+      TLD_X11_COMPANION_READY=1
+    fi
+  else
+    result=$?
+    tld_install_fail "$TLD_INSTALL_STAGE" "$result" 'Termux:X11 companion check failed'
+    return "$result"
+  fi
+  if tld_check_x11_socket; then
+    if [[ -S "${TLD_X11_SOCKET:-$PREFIX/tmp/.X11-unix/X0}" ]]; then
+      TLD_X11_SOCKET_READY=1
+    fi
+  else
+    result=$?
+    tld_install_fail "$TLD_INSTALL_STAGE" "$result" 'Termux:X11 socket check failed'
+    return "$result"
+  fi
+
+  TLD_INSTALL_STAGE=host-packages
+  if tld_install_dependencies_missing; then
+    if pkg install -y proot-distro pulseaudio; then
+      :
+    else
+      result=$?
+      tld_install_fail "$TLD_INSTALL_STAGE" "$result" 'required Termux packages could not be installed'
+      return "$result"
+    fi
+  fi
+
+  TLD_INSTALL_STAGE=host-preflight-after-packages
+  if tld_check_host_prerequisites; then
+    :
+  else
+    result=$?
+    tld_install_fail "$TLD_INSTALL_STAGE" "$result" 'host prerequisites are incomplete after package installation'
+    return "$result"
+  fi
+
+  TLD_INSTALL_STAGE=rootfs
+  if tld_guest_install_rootfs; then
+    :
+  else
+    result=$?
+    tld_install_fail "$TLD_INSTALL_STAGE" "$result" 'rootfs installation or verification failed'
+    return "$result"
+  fi
+
+  TLD_INSTALL_STAGE=guest-provision
+  if tld_guest_provision; then
+    :
+  else
+    result=$?
+    tld_install_fail "$TLD_INSTALL_STAGE" "$result" 'guest provisioning failed'
+    return "$result"
+  fi
+
+  TLD_INSTALL_STAGE=guest-launcher
+  if tld_guest_copy_launcher; then
+    :
+  else
+    result=$?
+    tld_install_fail "$TLD_INSTALL_STAGE" "$result" 'guest launcher copy failed'
+    return "$result"
+  fi
+
+  TLD_INSTALL_STAGE=manifest
+  architecture=$(uname -m) || {
+    result=$?
+    tld_install_fail "$TLD_INSTALL_STAGE" "$result" 'cannot determine host architecture'
+    return "$result"
+  }
+  if [[ ! "$architecture" =~ ^[A-Za-z0-9._-]+$ || -z "$architecture" ]]; then
+    tld_install_fail "$TLD_INSTALL_STAGE" 1 'host architecture is invalid'
+    return 1
+  fi
+  if [[ ! ${TLD_GUEST_ROOTFS_MANIFEST_SHA256:-} =~ ^[0-9A-Fa-f]{64}$ ]]; then
+    tld_install_fail "$TLD_INSTALL_STAGE" 1 'resolved rootfs manifest SHA-256 is unavailable'
+    return 1
+  fi
+
+  if tld_manifest_begin install &&
+    tld_manifest_set status installed &&
+    tld_manifest_set architecture "$architecture" &&
+    tld_manifest_set rootfs_image "$TLD_ROOTFS_IMAGE" &&
+    tld_manifest_set rootfs_container "$TLD_ROOTFS_CONTAINER" &&
+    tld_manifest_set profile base &&
+    tld_manifest_set rootfs_manifest_sha256 "$TLD_GUEST_ROOTFS_MANIFEST_SHA256" &&
+    tld_manifest_commit "$TLD_INSTANCE_FILE"; then
+    :
+  else
+    result=$?
+    tld_install_fail "$TLD_INSTALL_STAGE" "$result" 'runtime manifest could not be written'
+    return "$result"
+  fi
+
+  if (( TLD_X11_SOCKET_READY == 1 && TLD_X11_COMPANION_READY == 1 )); then
+    printf '%s\n' 'Installation complete. Desktop readiness: PASS (Termux:X11 is available).'
+  else
+    printf '%s\n' 'Installation complete. Desktop readiness: WARN (start the matching Termux:X11 Android app and companion before launching).'
+  fi
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  if tld_install_main; then
+    exit 0
+  else
+    exit $?
+  fi
+fi

@@ -19,9 +19,25 @@ tld_check_architecture() {
 }
 
 tld_check_prerequisite_commands() {
+  local mode="${1:-runtime}"
   local command_name
   local result=0
-  for command_name in bash pkg proot-distro pactl flock; do
+  local -a required_commands=()
+
+  case "$mode" in
+    runtime)
+      required_commands=(bash pkg proot-distro pactl flock)
+      ;;
+    install)
+      required_commands=(bash pkg flock)
+      ;;
+    *)
+      printf 'FAIL unknown preflight mode=%s\n' "$mode"
+      return 1
+      ;;
+  esac
+
+  for command_name in "${required_commands[@]}"; do
     if tld_require_command "$command_name" >/dev/null 2>&1; then
       printf 'PASS command=%s\n' "$command_name"
     else
@@ -33,6 +49,7 @@ tld_check_prerequisite_commands() {
 }
 
 tld_check_host_prerequisites() {
+  local mode="${1:-runtime}"
   local result=0
 
   if ! tld_check_architecture; then
@@ -53,10 +70,18 @@ tld_check_host_prerequisites() {
     result=1
   fi
 
-  if ! tld_check_prerequisite_commands; then
+  if ! tld_check_prerequisite_commands "$mode"; then
     result=1
   fi
   return "$result"
+}
+
+tld_check_x11_companion() {
+  if tld_require_command termux-x11 >/dev/null 2>&1; then
+    printf '%s\n' 'PASS Termux:X11 companion command=termux-x11'
+  else
+    printf '%s\n' 'WARN Termux:X11 prerequisite is missing; install the matching Android app and termux-x11-nightly companion package'
+  fi
 }
 
 tld_check_storage() {
@@ -114,9 +139,9 @@ tld_check_x11_socket() {
     return 0
   fi
   if [[ "$mode" == 'install' ]]; then
-    printf 'WARN x11_socket=%s is missing; start Termux:X11 before launching the desktop\n' "$socket_path"
+    printf 'WARN Termux:X11 socket is not ready at %s; start the matching Android Termux:X11 app before launching the desktop\n' "$socket_path"
     return 0
   fi
-  printf 'FAIL x11_socket=%s is missing; start Termux:X11 and retry\n' "$socket_path"
+  printf 'FAIL Termux:X11 socket is not ready at %s; start the matching Android Termux:X11 app and retry\n' "$socket_path"
   return 1
 }

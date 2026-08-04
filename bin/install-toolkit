@@ -1,0 +1,199 @@
+#!/data/data/com.termux/files/usr/bin/bash
+set -Eeuo pipefail
+shopt -s nullglob dotglob
+
+if ! TLD_SCRIPT_PATH=$(readlink -f -- "${BASH_SOURCE[0]}"); then
+  printf '%s\n' 'FAIL cannot resolve installer path' >&2
+  exit 1
+fi
+TLD_SCRIPT_DIR=${TLD_SCRIPT_PATH%/*}
+TLD_REPO_ROOT=${TLD_SCRIPT_DIR%/bin}
+
+_tld_install_toolkit_fail() {
+  printf 'FAIL %s\n' "$*" >&2
+  exit 1
+}
+
+[[ -n ${PREFIX:-} ]] || _tld_install_toolkit_fail 'PREFIX is unset'
+[[ -n ${HOME:-} ]] || _tld_install_toolkit_fail 'HOME is unset'
+[[ -d "$PREFIX" ]] || _tld_install_toolkit_fail "PREFIX is not a directory: $PREFIX"
+[[ -d "$HOME" ]] || _tld_install_toolkit_fail "HOME is not a directory: $HOME"
+[[ -d "$TLD_REPO_ROOT" ]] || _tld_install_toolkit_fail "repository root is not a directory: $TLD_REPO_ROOT"
+[[ -d "$TLD_REPO_ROOT/lib" ]] || _tld_install_toolkit_fail 'shared library directory is missing'
+
+TLD_LIBRARY_FILES=("$TLD_REPO_ROOT"/lib/*.sh)
+(( ${#TLD_LIBRARY_FILES[@]} > 0 )) || _tld_install_toolkit_fail 'shared library dependencies are missing'
+for TLD_LIBRARY_FILE in "${TLD_LIBRARY_FILES[@]}"; do
+  [[ -f "$TLD_LIBRARY_FILE" && -r "$TLD_LIBRARY_FILE" ]] || _tld_install_toolkit_fail "shared library is not readable: $TLD_LIBRARY_FILE"
+done
+
+source "$TLD_REPO_ROOT/lib/tld-common.sh"
+source "$TLD_REPO_ROOT/lib/tld-preflight.sh"
+
+if ! tld_check_host_prerequisites install; then
+  exit 1
+fi
+
+for TLD_COMMAND in mkdir mktemp cp chmod mv ln readlink stat rm; do
+  tld_require_command "$TLD_COMMAND" >/dev/null 2>&1 || _tld_install_toolkit_fail "required installer command is missing: $TLD_COMMAND"
+done
+
+TLD_OPT_DIR="$PREFIX/opt"
+TLD_INSTALL_DIR="$TLD_OPT_DIR/termux-linux-desktop"
+TLD_BIN_DIR="$PREFIX/bin"
+
+[[ ! -L "$TLD_OPT_DIR" ]] || _tld_install_toolkit_fail "managed parent is a symlink: $TLD_OPT_DIR"
+if [[ -e "$TLD_OPT_DIR" && ! -d "$TLD_OPT_DIR" ]]; then
+  _tld_install_toolkit_fail "managed parent is not a directory: $TLD_OPT_DIR"
+fi
+if [[ -d "$TLD_INSTALL_DIR" && ! -f "$TLD_INSTALL_DIR/lib/tld-common.sh" ]]; then
+  _tld_install_toolkit_fail "existing install is not a toolkit install: $TLD_INSTALL_DIR"
+fi
+[[ ! -L "$TLD_INSTALL_DIR" ]] || _tld_install_toolkit_fail "existing install is a symlink: $TLD_INSTALL_DIR"
+
+[[ ! -L "$TLD_BIN_DIR" ]] || _tld_install_toolkit_fail "command directory is a symlink: $TLD_BIN_DIR"
+if [[ -e "$TLD_BIN_DIR" && ! -d "$TLD_BIN_DIR" ]]; then
+  _tld_install_toolkit_fail "command directory is not a directory: $TLD_BIN_DIR"
+fi
+
+mkdir -p -- "$TLD_OPT_DIR" "$TLD_BIN_DIR"
+
+_tld_stage_skip() {
+  local relative_path="${1-}"
+  local name="${relative_path##*/}"
+
+  case "$name" in
+    .git|.mcp.json|.env.local|.env.*.local|*.log|*.tmp|*.swp|*.swo|*.tar|*.tar.*|*.rootfs|*.zip|*.7z|*.gz|*.bz2|*.xz|*.zst|*.iso|*.img|*.obb|*.pak|*.sav|*.pem|*.key|*.private|*.secret|private*|secret*|credential*|token*|password*|passwd*|id_rsa)
+      return 0
+      ;;
+  esac
+  case "$relative_path" in
+    */.git|*/.git/*|*/coverage|*/coverage/*|*/test-output|*/test-output/*|*/logs|*/logs/*|*/log|*/log/*|*/.cache|*/.cache/*|*/dist|*/dist/*|*/release|*/release/*|*/acceptance|*/acceptance/*|*/game|*/game/*|*/games|*/games/*|*/game-data|*/game-data/*|*/steam|*/steam/*|*/wine|*/wine/*)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+_tld_stage_copy_tree() {
+  local source_path="$1"
+  local destination_path="$2"
+  local relative_path="$3"
+  local child_path child_name mode
+
+  _tld_stage_skip "$relative_path" && return 0
+  [[ ! -L "$source_path" ]] || return 0
+
+  if [[ -d "$source_path" ]]; then
+    mkdir -p -- "$destination_path"
+    mode=$(stat -c '%a' -- "$source_path") || return 1
+    chmod "$mode" "$destination_path" || return 1
+    for child_path in "$source_path"/*; do
+      child_name=${child_path##*/}
+      _tld_stage_copy_tree "$child_path" "$destination_path/$child_name" "$relative_path/$child_name" || return 1
+    done
+    return 0
+  fi
+
+  [[ -f "$source_path" ]] || return 0
+  cp -p -- "$source_path" "$destination_path"
+}
+
+TLD_STAGE_DIR=''
+TLD_BACKUP_DIR=''
+
+_tld_install_toolkit_cleanup() {
+  local result=$?
+  if [[ -n "$TLD_STAGE_DIR" && -d "$TLD_STAGE_DIR" ]]; then
+    rm -r -- "$TLD_STAGE_DIR" || true
+  fi
+  if [[ -n "$TLD_BACKUP_DIR" && -d "$TLD_BACKUP_DIR" ]]; then
+    rm -r -- "$TLD_BACKUP_DIR" || true
+  fi
+  exit "$result"
+}
+trap _tld_install_toolkit_cleanup EXIT
+
+if ! TLD_STAGE_DIR=$(mktemp -d "$TLD_OPT_DIR/.termux-linux-desktop.stage.XXXXXXXX"); then
+  _tld_install_toolkit_fail "cannot create staging directory under $TLD_OPT_DIR"
+fi
+
+for TLD_STAGE_NAME in bin lib profiles rootfs docs; do
+  if [[ -d "$TLD_REPO_ROOT/$TLD_STAGE_NAME" ]]; then
+    _tld_stage_copy_tree "$TLD_REPO_ROOT/$TLD_STAGE_NAME" "$TLD_STAGE_DIR/$TLD_STAGE_NAME" "$TLD_STAGE_NAME" || _tld_install_toolkit_fail "cannot stage $TLD_STAGE_NAME"
+  fi
+done
+
+TLD_PUBLIC_COMMANDS=(desktop-install desktop-start desktop-stop desktop-status desktop-doctor desktop-profile desktop-reset)
+TLD_LINK_COMMANDS=()
+for TLD_COMMAND in "${TLD_PUBLIC_COMMANDS[@]}"; do
+  if [[ -f "$TLD_STAGE_DIR/bin/$TLD_COMMAND" ]]; then
+    [[ -x "$TLD_STAGE_DIR/bin/$TLD_COMMAND" ]] || _tld_install_toolkit_fail "public command is not executable: $TLD_COMMAND"
+    TLD_LINK_COMMANDS+=("$TLD_COMMAND")
+  fi
+done
+
+_tld_link_points_into_install() {
+  local link_path="$1"
+  local link_target resolved_target
+
+  link_target=$(readlink -- "$link_path") || return 1
+  case "$link_target" in
+    "$TLD_INSTALL_DIR"/*)
+      return 0
+      ;;
+    /*)
+      return 1
+      ;;
+  esac
+  resolved_target=$(readlink -f -- "$link_path") || return 1
+  case "$resolved_target" in
+    "$TLD_INSTALL_DIR"/*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+for TLD_COMMAND in "${TLD_LINK_COMMANDS[@]}"; do
+  TLD_LINK_PATH="$TLD_BIN_DIR/$TLD_COMMAND"
+  if [[ -e "$TLD_LINK_PATH" || -L "$TLD_LINK_PATH" ]]; then
+    [[ -L "$TLD_LINK_PATH" ]] || _tld_install_toolkit_fail "refusing to overwrite non-toolkit path: $TLD_LINK_PATH"
+    _tld_link_points_into_install "$TLD_LINK_PATH" || _tld_install_toolkit_fail "refusing to overwrite non-toolkit symlink: $TLD_LINK_PATH"
+  fi
+done
+
+if [[ -d "$TLD_INSTALL_DIR" ]]; then
+  if ! TLD_BACKUP_DIR=$(mktemp -d "$TLD_OPT_DIR/.termux-linux-desktop.old.XXXXXXXX"); then
+    _tld_install_toolkit_fail "cannot create replacement directory under $TLD_OPT_DIR"
+  fi
+  if ! mv -T -- "$TLD_INSTALL_DIR" "$TLD_BACKUP_DIR/tree"; then
+    _tld_install_toolkit_fail "cannot stage the existing toolkit install for replacement"
+  fi
+fi
+
+if mv -T -- "$TLD_STAGE_DIR" "$TLD_INSTALL_DIR"; then
+  TLD_STAGE_DIR=''
+else
+  if [[ -n "$TLD_BACKUP_DIR" && -d "$TLD_BACKUP_DIR/tree" ]]; then
+    mv -T -- "$TLD_BACKUP_DIR/tree" "$TLD_INSTALL_DIR" || true
+  fi
+  _tld_install_toolkit_fail "cannot atomically install the toolkit tree"
+fi
+
+if [[ -n "$TLD_BACKUP_DIR" && -d "$TLD_BACKUP_DIR" ]]; then
+  rm -r -- "$TLD_BACKUP_DIR"
+  TLD_BACKUP_DIR=''
+fi
+
+for TLD_COMMAND in "${TLD_LINK_COMMANDS[@]}"; do
+  TLD_LINK_PATH="$TLD_BIN_DIR/$TLD_COMMAND"
+  if [[ -L "$TLD_LINK_PATH" ]]; then
+    rm -f -- "$TLD_LINK_PATH"
+  fi
+  ln -s -- "$TLD_INSTALL_DIR/bin/$TLD_COMMAND" "$TLD_LINK_PATH"
+done
+
+printf '%s\n' desktop-install

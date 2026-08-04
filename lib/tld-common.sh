@@ -23,6 +23,22 @@ tld_init_paths() {
   mkdir -p -- "$TLD_STATE_DIR" "$TLD_LOG_DIR" "$TLD_CONFIG_DIR"
 }
 
+tld_init_managed_paths() {
+  if [[ "${TLD_TEST_MODE:-0}" == 1 ]]; then
+    tld_init_paths
+    return
+  fi
+
+  : "${PREFIX:?PREFIX must be set before initializing managed paths}"
+  : "${HOME:?HOME must be set before initializing managed paths}"
+  TLD_STATE_DIR="$PREFIX/var/lib/termux-linux-desktop"
+  TLD_LOG_DIR="$PREFIX/var/log/termux-linux-desktop"
+  TLD_CONFIG_DIR="$HOME/.config/termux-linux-desktop"
+  TLD_INSTALL_DIR="$PREFIX/opt/termux-linux-desktop"
+  TLD_INSTANCE_FILE="$TLD_STATE_DIR/instance.env"
+  tld_init_paths
+}
+
 tld_log() {
   local log_dir="${TLD_LOG_DIR:?TLD_LOG_DIR must be initialized before logging}"
   local line

@@ -76,7 +76,7 @@ _tld_guest_prepare_paths() {
     _tld_guest_error 'PREFIX and HOME must be set before using guest functions'
     return 1
   fi
-  tld_init_paths || return 1
+  tld_init_managed_paths || return 1
   _tld_guest_validate_path_components "$PREFIX" PREFIX || return 1
   _tld_guest_validate_path_components "$TLD_STATE_DIR" TLD_STATE_DIR || return 1
   _tld_guest_validate_path_components "$TLD_LOG_DIR" TLD_LOG_DIR || return 1
@@ -90,6 +90,10 @@ _tld_guest_load_rootfs_env() {
   local line key
   local assignment_count=0
   local -A seen=()
+
+  if ! _tld_guest_test_mode; then
+    env_file="$_tld_guest_lib_dir/../rootfs/ubuntu-24.04.env"
+  fi
 
   if [[ -z "$env_file" || ! -f "$env_file" || ! -r "$env_file" ]]; then
     _tld_guest_error "cannot read rootfs environment file: $env_file"
