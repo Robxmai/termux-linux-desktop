@@ -9,7 +9,7 @@ setup() {
   export TLD_INSTALL_DIR="$BATS_TEST_TMPDIR/install"
   export TLD_INSTANCE_FILE="$TLD_STATE_DIR/instance.env"
   export TLD_LIB_DIR="$BATS_TEST_DIRNAME/../lib"
-  unset TLD_ROOTFS_DIR TLD_ROOTFS_MANIFEST_FILE TLD_GUEST_LOG_FILE TLD_ROOTFS_ENV_FILE TLD_TEST_MODE TLD_TEST_ROOT
+  unset TLD_ROOTFS_DIR TLD_ROOTFS_MANIFEST_FILE TLD_GUEST_LOG_FILE TLD_ROOTFS_ENV_FILE TLD_TEST_MODE TLD_TEST_ROOT TLD_TEST_LOCK_HELD TLD_TEST_LOCK_RELEASED
   export TLD_TEST_MODE=1
   export TLD_TEST_ROOT="$BATS_TEST_TMPDIR"
   export TLD_ROOTFS_ENV_FILE="$BATS_TEST_TMPDIR/ubuntu.env"
@@ -53,6 +53,11 @@ setup() {
     '    exit "${TLD_TEST_INSTALL_STATUS:-0}"' \
     '    ;;' \
     '  login)' \
+    '    if [[ -n "${TLD_TEST_LOCK_HELD:-}" && -e "$TLD_TEST_LOCK_HELD" ]]; then' \
+    '      printf "%s\n" provision-login-while-locked >> "$TLD_TEST_CALL_LOG"' \
+    '      exit 98' \
+    '    fi' \
+    '    printf "%s\n" provision-login-after-lock >> "$TLD_TEST_CALL_LOG"' \
     '    command="${!#}"' \
     '    printf "%s\\n" "$@" > "$TLD_TEST_LOGIN_ARGS"' \
     '    printf "%s" "$command" > "$TLD_TEST_GUEST_COMMAND"' \
@@ -441,4 +446,34 @@ make_installed_rootfs() {
 
   [ "$status" -eq 0 ]
   grep -Fx 'proot-distro install ubuntu:24.04 --name tld-ubuntu' "$TLD_TEST_CALL_LOG"
+}
+
+@test "guest provisioning waits for the state lock before login" {
+  lock_file="$TLD_STATE_DIR/guest.lock"
+  held="$TLD_TEST_ROOT/provision-lock-held"
+  released="$TLD_TEST_ROOT/provision-lock-released"
+  export TLD_TEST_LOCK_HELD="$held"
+  export TLD_TEST_LOCK_RELEASED="$released"
+  (
+    exec 9>"$lock_file"
+    flock -x 9
+    : > "$held"
+    sleep 0.25
+    rm -f -- "$held"
+    : > "$released"
+  ) &
+  holder_pid=$!
+  while [ ! -e "$held" ]; do
+    sleep 0.01
+  done
+
+  run tld_guest_provision
+  wait "$holder_pid"
+
+  [ "$status" -eq 0 ]
+  [ -e "$released" ]
+  [ ! -e "$held" ]
+  ! grep -Fx 'provision-login-while-locked' "$TLD_TEST_CALL_LOG"
+  grep -Fx 'provision-login-after-lock' "$TLD_TEST_CALL_LOG"
+  [ "$(grep -F -c 'proot-distro login' "$TLD_TEST_CALL_LOG")" -eq 1 ]
 }
