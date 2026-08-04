@@ -19,12 +19,36 @@ _tld_install_toolkit_fail() {
 [[ -d "$PREFIX" ]] || _tld_install_toolkit_fail "PREFIX is not a directory: $PREFIX"
 [[ -d "$HOME" ]] || _tld_install_toolkit_fail "HOME is not a directory: $HOME"
 [[ -d "$TLD_REPO_ROOT" ]] || _tld_install_toolkit_fail "repository root is not a directory: $TLD_REPO_ROOT"
+[[ ! -L "$TLD_REPO_ROOT/lib" ]] || _tld_install_toolkit_fail 'shared library directory is a symlink'
 [[ -d "$TLD_REPO_ROOT/lib" ]] || _tld_install_toolkit_fail 'shared library directory is missing'
 
-TLD_LIBRARY_FILES=("$TLD_REPO_ROOT"/lib/*.sh)
-(( ${#TLD_LIBRARY_FILES[@]} > 0 )) || _tld_install_toolkit_fail 'shared library dependencies are missing'
-for TLD_LIBRARY_FILE in "${TLD_LIBRARY_FILES[@]}"; do
-  [[ -f "$TLD_LIBRARY_FILE" && -r "$TLD_LIBRARY_FILE" ]] || _tld_install_toolkit_fail "shared library is not readable: $TLD_LIBRARY_FILE"
+TLD_REQUIRED_LIBRARY_FILES=(
+  lib/tld-common.sh
+  lib/tld-preflight.sh
+  lib/tld-manifest.sh
+  lib/tld-process.sh
+  lib/tld-guest.sh
+)
+TLD_REQUIRED_RELEASE_FILES=(
+  bin/desktop-install
+  bin/desktop-doctor
+  lib/tld-common.sh
+  lib/tld-preflight.sh
+  lib/tld-manifest.sh
+  lib/tld-process.sh
+  lib/tld-guest.sh
+  profiles/base.env
+  rootfs/ubuntu-24.04.env
+)
+for TLD_RELEASE_FILE in "${TLD_REQUIRED_RELEASE_FILES[@]}"; do
+  TLD_RELEASE_PATH="$TLD_REPO_ROOT/$TLD_RELEASE_FILE"
+  [[ -f "$TLD_RELEASE_PATH" && ! -L "$TLD_RELEASE_PATH" && -r "$TLD_RELEASE_PATH" ]] ||
+    _tld_install_toolkit_fail "required release file is missing or not a regular non-symlink file: $TLD_RELEASE_PATH"
+done
+for TLD_LIBRARY_FILE in "${TLD_REQUIRED_LIBRARY_FILES[@]}"; do
+  TLD_LIBRARY_PATH="$TLD_REPO_ROOT/$TLD_LIBRARY_FILE"
+  [[ -f "$TLD_LIBRARY_PATH" && ! -L "$TLD_LIBRARY_PATH" && -r "$TLD_LIBRARY_PATH" ]] ||
+    _tld_install_toolkit_fail "shared library is not a regular non-symlink file: $TLD_LIBRARY_PATH"
 done
 
 source "$TLD_REPO_ROOT/lib/tld-common.sh"
@@ -138,20 +162,12 @@ declare -A TLD_LINK_TARGET=()
 
 _tld_link_points_into_install() {
   local link_path="$1"
-  local link_target resolved_target
+  local canonical_install_dir canonical_target
 
-  link_target=$(readlink -- "$link_path") || return 1
-  case "$link_target" in
-    "$TLD_INSTALL_DIR"/*)
-      return 0
-      ;;
-    /*)
-      return 1
-      ;;
-  esac
-  resolved_target=$(readlink -f -- "$link_path") || return 1
-  case "$resolved_target" in
-    "$TLD_INSTALL_DIR"/*)
+  canonical_install_dir=$(readlink -f -- "$TLD_INSTALL_DIR") || return 1
+  canonical_target=$(readlink -f -- "$link_path") || return 1
+  case "$canonical_target" in
+    "$canonical_install_dir"/*)
       return 0
       ;;
     *)

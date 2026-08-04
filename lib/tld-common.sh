@@ -169,7 +169,7 @@ tld_read_env_file() {
   local file="${1-}"
   local line key raw allowed_key
   local enforce_allowlist=0
-  local -A parsed=() allowed_keys=()
+  local -A parsed=() allowed_keys=() seen_keys=()
 
   if (( $# > 1 )); then
     enforce_allowlist=1
@@ -204,6 +204,11 @@ tld_read_env_file() {
       printf 'unknown environment key: %s\n' "$key" >&2
       return 1
     fi
+    if [[ -n ${seen_keys[$key]+x} ]]; then
+      printf 'duplicate environment key: %s\n' "$key" >&2
+      return 1
+    fi
+    seen_keys["$key"]=1
     if ! _tld_decode_env_value "$raw"; then
       printf 'unsafe environment value for %s in: %s\n' "$key" "$file" >&2
       return 1

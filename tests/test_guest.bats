@@ -25,8 +25,9 @@ setup() {
   export TLD_TEST_INSTALL_CREATE_ROOTFS=1
   export TLD_TEST_INSTALL_CREATE_MANIFEST=1
   export TLD_TEST_LOGIN_STATUS=0
-  export TLD_TEST_MANIFEST_SHA256=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
-  export PATH="$TLD_TEST_BIN:$BATS_TEST_DIRNAME/helpers/fake-termux/bin:$PATH"
+  export TLD_REAL_PATH="$PATH"
+  export TLD_REAL_SHA256SUM="$(PATH="$TLD_REAL_PATH" command -v sha256sum)"
+  export PATH="$TLD_TEST_BIN:$BATS_TEST_DIRNAME/helpers/fake-termux/bin:$TLD_REAL_PATH"
 
   mkdir -p "$HOME" "$PREFIX" "$TLD_STATE_DIR" "$TLD_LOG_DIR" "$TLD_CONFIG_DIR" "$TLD_TEST_BIN"
   : > "$TLD_TEST_CALL_LOG"
@@ -74,7 +75,7 @@ setup() {
 
   printf '%s\n' \
     '#!/usr/bin/env bash' \
-    'printf "%s  %s\n" "${TLD_TEST_MANIFEST_SHA256:?}" "${1:?}"' > "$TLD_TEST_BIN/sha256sum"
+    'exec "${TLD_REAL_SHA256SUM:?}" "$@"' > "$TLD_TEST_BIN/sha256sum"
 
   for command_name in apt-get id useradd install; do
     printf '%s\n' \
@@ -103,6 +104,10 @@ make_installed_rootfs() {
   printf '%s\n' manifest > "$TLD_TEST_MANIFEST_FILE"
 }
 
+test_manifest_sha256() {
+  "$TLD_REAL_SHA256SUM" "$TLD_TEST_MANIFEST_FILE" | awk '{print $1}'
+}
+
 @test "tld_guest_install_rootfs validates the pinned rootfs assignments" {
   tld_guest_install_rootfs
 
@@ -114,7 +119,7 @@ make_installed_rootfs() {
   [ "$TLD_GUEST_PROOT_VERSION" = '5.5.0' ]
   [ "$TLD_GUEST_ROOTFS_DIR" = "$TLD_TEST_ROOTFS_DIR" ]
   [ "$TLD_GUEST_MANIFEST_FILE" = "$TLD_TEST_MANIFEST_FILE" ]
-  [ "$TLD_GUEST_MANIFEST_SHA256" = "$TLD_TEST_MANIFEST_SHA256" ]
+  [ "$TLD_GUEST_MANIFEST_SHA256" = "$(test_manifest_sha256)" ]
 }
 
 @test "tld_guest_install_rootfs rejects malicious rootfs env syntax without executing it" {
@@ -160,7 +165,7 @@ make_installed_rootfs() {
   tld_guest_install_rootfs
 
   ! grep -Fx 'proot-distro install ubuntu:24.04 --name tld-ubuntu' "$TLD_TEST_CALL_LOG"
-  [ "$TLD_GUEST_MANIFEST_SHA256" = "$TLD_TEST_MANIFEST_SHA256" ]
+  [ "$TLD_GUEST_MANIFEST_SHA256" = "$(test_manifest_sha256)" ]
 }
 
 @test "tld_guest_install_rootfs fails when an existing rootfs has no manifest" {

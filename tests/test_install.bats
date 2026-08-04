@@ -20,7 +20,6 @@ setup() {
   export TLD_TEST_PROOT_VERSION=5.5.0
   export TLD_TEST_INSTALL_STATUS=0
   export TLD_TEST_LOGIN_STATUS=0
-  export TLD_TEST_MANIFEST_SHA256=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
   export TLD_CHECKOUT_ROOT="$BATS_TEST_DIRNAME/.."
   export TLD_REPO_ROOT="$TLD_TEST_ROOT/source"
   export TLD_INSTALLER="$TLD_REPO_ROOT/bin/install-toolkit"
@@ -45,7 +44,9 @@ setup() {
   export TLD_REAL_PATH="$PATH"
   export TLD_REAL_LN="$(PATH="$TLD_REAL_PATH" command -v ln)"
   export TLD_REAL_MV="$(PATH="$TLD_REAL_PATH" command -v mv)"
+  export TLD_REAL_CP="$(PATH="$TLD_REAL_PATH" command -v cp)"
   export TLD_REAL_RM="$(PATH="$TLD_REAL_PATH" command -v rm)"
+  export TLD_REAL_SHA256SUM="$(PATH="$TLD_REAL_PATH" command -v sha256sum)"
   export PATH="$TLD_TEST_BIN:$TLD_REAL_PATH"
 
   printf '%s\n' \
@@ -104,7 +105,7 @@ setup() {
 
   printf '%s\n' \
     '#!/usr/bin/env bash' \
-    'printf "%s  %s\\n" "${TLD_TEST_MANIFEST_SHA256:?}" "${1:?}"' \
+    'exec "${TLD_REAL_SHA256SUM:?}" "$@"' \
     > "$TLD_TEST_BIN/sha256sum"
 
   printf '%s\n' \
@@ -143,6 +144,10 @@ prepare_desktop_test() {
   export TLD_GUEST_LOG_FILE="$TLD_LOG_DIR/guest.log"
 }
 
+test_manifest_sha256() {
+  "$TLD_REAL_SHA256SUM" "$TLD_TEST_MANIFEST_FILE" | awk '{print $1}'
+}
+
 write_doctor_manifest() {
   printf '%s\n' \
     'manifest_version=1' \
@@ -154,7 +159,7 @@ write_doctor_manifest() {
     'rootfs_image=ubuntu:24.04' \
     'rootfs_container=tld-ubuntu' \
     'profile=base' \
-    "rootfs_manifest_sha256=$TLD_TEST_MANIFEST_SHA256" \
+    "rootfs_manifest_sha256=$(test_manifest_sha256)" \
     > "$TLD_INSTANCE_FILE"
 }
 
@@ -203,6 +208,32 @@ write_owner_sentinel() {
   [ ! -e "$TLD_INSTANCE_FILE" ]
 }
 
+@test "install-toolkit rejects a symlinked shared library before sourcing it" {
+  outside="$TLD_OTHER_DIR/outside-library.sh"
+  marker="$TLD_OTHER_DIR/sourced.marker"
+  printf '%s\n' '#!/usr/bin/env bash' ': > "${TLD_TEST_SYMLINK_SOURCE_MARKER:?}"' > "$outside"
+  export TLD_TEST_SYMLINK_SOURCE_MARKER="$marker"
+  rm -f -- "$TLD_REPO_ROOT/lib/tld-common.sh"
+  ln -s -- "$outside" "$TLD_REPO_ROOT/lib/tld-common.sh"
+
+  run_toolkit_install
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'required release file is missing or not a regular non-symlink file'* ]]
+  [ ! -e "$marker" ]
+  [ ! -e "$PREFIX/opt/termux-linux-desktop" ]
+}
+
+@test "install-toolkit rejects a missing current core release file" {
+  rm -f -- "$TLD_REPO_ROOT/lib/tld-process.sh"
+
+  run_toolkit_install
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'required release file is missing or not a regular non-symlink file'* ]]
+  [ ! -e "$PREFIX/opt/termux-linux-desktop" ]
+}
+
 @test "base profile is exact and safe-parser compatible" {
   profile_file="$TLD_CHECKOUT_ROOT/profiles/base.env"
   expected=(
@@ -231,6 +262,22 @@ write_owner_sentinel() {
   [ "$GUEST_USER" = tld ]
   [ "$REQUIRES_GPU" = false ]
   [ "$REQUIRES_WINE" = false ]
+}
+
+@test "desktop-install rejects profile control-variable injection" {
+  injected_instance="$TLD_OTHER_DIR/injected-instance.env"
+  printf '%s\n' "TLD_INSTANCE_FILE=$injected_instance" >> "$TLD_REPO_ROOT/profiles/base.env"
+
+  run_toolkit_install
+  [ "$status" -eq 0 ]
+  prepare_desktop_test
+
+  run bash "$PREFIX/bin/desktop-install"
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'unknown environment key: TLD_INSTANCE_FILE'* ]]
+  [ ! -e "$TLD_INSTANCE_FILE" ]
+  [ ! -e "$injected_instance" ]
 }
 
 @test "desktop-install completes base installation stages in order" {
@@ -412,6 +459,40 @@ write_owner_sentinel() {
   [[ "$output" != *'removed active install marker'* ]]
 }
 
+@test "quarantine preserves the active marker when move and fallback copy fail" {
+  run_toolkit_install
+  [ "$status" -eq 0 ]
+  prepare_desktop_test
+
+  run bash "$PREFIX/bin/desktop-install"
+  [ "$status" -eq 0 ]
+  grep -Fx 'status=installed' "$TLD_INSTANCE_FILE"
+
+  printf '%s\n' \
+    '#!/usr/bin/env bash' \
+    'if [[ "$*" == *"/backups/"* ]]; then exit 73; fi' \
+    'exec "${TLD_REAL_MV:?}" "$@"' \
+    > "$TLD_TEST_BIN/mv"
+  chmod +x "$TLD_TEST_BIN/mv"
+  printf '%s\n' \
+    '#!/usr/bin/env bash' \
+    'if [[ "$*" == *"/backups/"* ]]; then' \
+    '  printf "%s\\n" "injected quarantine cp failure" >&2' \
+    '  exit 74' \
+    'fi' \
+    'exec "${TLD_REAL_CP:?}" "$@"' \
+    > "$TLD_TEST_BIN/cp"
+  chmod +x "$TLD_TEST_BIN/cp"
+
+  run bash "$PREFIX/bin/desktop-install"
+
+  [ "$status" -eq 73 ]
+  grep -Fx 'status=installed' "$TLD_INSTANCE_FILE"
+  [[ "$output" == *'status=73'* ]]
+  [[ "$output" == *'quarantine backup copy failed'* ]]
+  [[ "$output" == *'previous installation marker preserved'* ]]
+}
+
 @test "desktop-doctor install mode passes without GPU or Wine" {
   run_toolkit_install
   [ "$status" -eq 0 ]
@@ -528,7 +609,7 @@ write_owner_sentinel() {
   grep -Fx 'rootfs_image=ubuntu:24.04' "$TLD_INSTANCE_FILE"
   grep -Fx 'rootfs_container=tld-ubuntu' "$TLD_INSTANCE_FILE"
   grep -Fx 'profile=base' "$TLD_INSTANCE_FILE"
-  grep -Fx "rootfs_manifest_sha256=$TLD_TEST_MANIFEST_SHA256" "$TLD_INSTANCE_FILE"
+  grep -Fx "rootfs_manifest_sha256=$(test_manifest_sha256)" "$TLD_INSTANCE_FILE"
   grep -Eq '^created_at=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$' "$TLD_INSTANCE_FILE"
   [ -L "$PREFIX/bin/desktop-install" ]
   [ "$(readlink "$PREFIX/bin/desktop-install")" = "$PREFIX/opt/termux-linux-desktop/bin/desktop-install" ]
@@ -580,6 +661,24 @@ write_owner_sentinel() {
   [ -L "$PREFIX/bin/desktop-install" ]
   grep -Fx 'OWNER=termux-linux-desktop' "$PREFIX/opt/termux-linux-desktop/.tld-toolkit-owner"
   grep -Fx 'VERSION=0.1.0' "$PREFIX/opt/termux-linux-desktop/.tld-toolkit-owner"
+}
+
+@test "install-toolkit rejects a dot-dot symlink that resolves outside the install" {
+  run_toolkit_install
+  [ "$status" -eq 0 ]
+  outside="$PREFIX/opt/outside"
+  mkdir -p "$outside"
+  printf '%s\n' outside > "$outside/desktop-install"
+  outside_target="$PREFIX/opt/termux-linux-desktop/../outside/desktop-install"
+  rm -f -- "$PREFIX/bin/desktop-install"
+  ln -s -- "$outside_target" "$PREFIX/bin/desktop-install"
+
+  run_toolkit_install
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'refusing to overwrite non-toolkit symlink'* ]]
+  [ "$(readlink "$PREFIX/bin/desktop-install")" = "$outside_target" ]
+  [ "$(<"$outside/desktop-install")" = outside ]
 }
 
 @test "install-toolkit rejects unknown rootfs files instead of copying them" {
@@ -682,6 +781,6 @@ write_owner_sentinel() {
   [ ! -e "$PREFIX/opt/termux-linux-desktop/rootfs/game-data" ]
   [ ! -e "$PREFIX/opt/termux-linux-desktop" ]
   ! compgen -G "$PREFIX/opt/.termux-linux-desktop.stage.*" >/dev/null
-  ! compgen -G "$PREFIX/opt/.termux-linux-desktop.old.*" >/dev/null
+  ! compgen -G "$PREFIX/opt/.termux-linux-desktop.backup.*" >/dev/null
   [ ! -e "$PREFIX/opt/termux-linux-desktop/tests" ]
 }

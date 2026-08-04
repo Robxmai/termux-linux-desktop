@@ -102,20 +102,26 @@ tld_install_quarantine_success_marker() {
     else
       backup_status=$?
       printf 'quarantine backup copy failed for active install marker: %s status=%s\n' "$TLD_INSTANCE_FILE" "$backup_status" >&2
+      printf 'quarantine previous installation marker preserved: %s\n' "$TLD_INSTANCE_FILE" >&2
+      return "$move_status"
     fi
   else
-    printf 'quarantine backup copy skipped for non-regular active marker: %s\n' "$TLD_INSTANCE_FILE" >&2
+    printf 'quarantine fallback unavailable for non-regular active marker: %s\n' "$TLD_INSTANCE_FILE" >&2
+    printf 'quarantine previous installation marker preserved: %s\n' "$TLD_INSTANCE_FILE" >&2
+    return "$move_status"
   fi
 
   if rm -f -- "$TLD_INSTANCE_FILE"; then
     if [[ -e "$TLD_INSTANCE_FILE" || -L "$TLD_INSTANCE_FILE" ]]; then
       printf 'quarantine active marker removal did not remove path: %s\n' "$TLD_INSTANCE_FILE" >&2
+      printf 'quarantine previous installation marker preserved: %s\n' "$TLD_INSTANCE_FILE" >&2
       return "$move_status"
     fi
     printf 'quarantine removed active install marker after move failure: %s\n' "$TLD_INSTANCE_FILE" >&2
   else
     remove_status=$?
     printf 'quarantine active marker removal failed: %s status=%s\n' "$TLD_INSTANCE_FILE" "$remove_status" >&2
+    printf 'quarantine previous installation marker preserved: %s\n' "$TLD_INSTANCE_FILE" >&2
     return "$remove_status"
   fi
   return "$move_status"
@@ -132,6 +138,16 @@ tld_install_remove_success_manifest() {
 
 tld_install_main() {
   local result architecture profile_file cleanup_result
+  local -a profile_keys=(
+    PROFILE_NAME
+    PROFILE_VERSION
+    DISPLAY_DEFAULT
+    PULSE_SERVER_DEFAULT
+    GUEST_CONTAINER
+    GUEST_USER
+    REQUIRES_GPU
+    REQUIRES_WINE
+  )
 
   TLD_INSTALL_STAGE=initialization
   if ! tld_init_managed_paths; then
@@ -241,7 +257,7 @@ tld_install_main() {
   profile_file="$TLD_TOOLKIT_ROOT/profiles/base.env"
   unset PROFILE_NAME PROFILE_VERSION DISPLAY_DEFAULT PULSE_SERVER_DEFAULT GUEST_CONTAINER GUEST_USER REQUIRES_GPU REQUIRES_WINE
   if [[ -f "$profile_file" && ! -L "$profile_file" ]] &&
-    tld_read_env_file "$profile_file" &&
+    tld_read_env_file "$profile_file" "${profile_keys[@]}" &&
     [[ "${PROFILE_NAME-}" == base &&
       "${PROFILE_VERSION-}" == 1 &&
       "${DISPLAY_DEFAULT-}" == :0 &&

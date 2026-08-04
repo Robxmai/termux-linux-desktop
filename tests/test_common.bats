@@ -153,6 +153,18 @@ setup() {
   [ "$GREETING" = 'hello world' ]
 }
 
+@test "tld_read_env_file rejects duplicate keys" {
+  env_file="$BATS_TEST_TMPDIR/duplicate.env"
+  unset ALPHA
+  printf '%s\n' 'ALPHA=one' 'ALPHA=two' > "$env_file"
+
+  run tld_read_env_file "$env_file"
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'duplicate environment key: ALPHA'* ]]
+  [ -z "${ALPHA+x}" ]
+}
+
 @test "tld_read_env_file propagates readonly assignment failures" {
   env_file="$BATS_TEST_TMPDIR/readonly.env"
   printf '%s\n' 'TLD_READONLY=changed' 'SAFE=ok' > "$env_file"
