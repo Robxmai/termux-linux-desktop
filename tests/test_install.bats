@@ -13,6 +13,7 @@ setup() {
   export TLD_TEST_BIN="$TLD_TEST_ROOT/bin"
   export TLD_TEST_CALL_LOG="$TLD_TEST_ROOT/calls.log"
   export TLD_TEST_PKG_LOG="$TLD_TEST_ROOT/pkg.log"
+  export TLD_TEST_EVENT_LOG="$TLD_TEST_ROOT/events.log"
   export TLD_TEST_PROOT_STUB="$TLD_TEST_ROOT/proot-distro.stub"
   export TLD_TEST_PACTL_STUB="$TLD_TEST_ROOT/pactl.stub"
   export TLD_TEST_ARCH=aarch64
@@ -20,7 +21,8 @@ setup() {
   export TLD_TEST_INSTALL_STATUS=0
   export TLD_TEST_LOGIN_STATUS=0
   export TLD_TEST_MANIFEST_SHA256=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
-  export TLD_REPO_ROOT="$BATS_TEST_DIRNAME/.."
+  export TLD_CHECKOUT_ROOT="$BATS_TEST_DIRNAME/.."
+  export TLD_REPO_ROOT="$TLD_TEST_ROOT/source"
   export TLD_INSTALLER="$TLD_REPO_ROOT/bin/install-toolkit"
   export TLD_OTHER_DIR="$TLD_TEST_ROOT/other"
 
@@ -31,14 +33,24 @@ setup() {
   mkdir -p "$HOME" "$PREFIX/bin" "$PREFIX/opt" "$TLD_STATE_DIR" "$TLD_LOG_DIR" "$TLD_CONFIG_DIR" "$TLD_TEST_BIN" "$TLD_OTHER_DIR"
   : > "$TLD_TEST_CALL_LOG"
   : > "$TLD_TEST_PKG_LOG"
+  : > "$TLD_TEST_EVENT_LOG"
+
+  mkdir -p "$TLD_REPO_ROOT"
+  for TLD_SOURCE_DIR in bin lib profiles rootfs docs; do
+    if [[ -d "$TLD_CHECKOUT_ROOT/$TLD_SOURCE_DIR" ]]; then
+      cp -a -- "$TLD_CHECKOUT_ROOT/$TLD_SOURCE_DIR" "$TLD_REPO_ROOT/"
+    fi
+  done
 
   export TLD_REAL_PATH="$PATH"
+  export TLD_REAL_LN="$(PATH="$TLD_REAL_PATH" command -v ln)"
   export PATH="$TLD_TEST_BIN:$TLD_REAL_PATH"
 
   printf '%s\n' \
     '#!/usr/bin/env bash' \
     'set -Eeuo pipefail' \
     'printf "proot-distro" >> "${TLD_TEST_CALL_LOG:?}"' \
+    'printf "proot-distro\\n" >> "${TLD_TEST_EVENT_LOG:?}"' \
     'printf " %s" "$@" >> "${TLD_TEST_CALL_LOG:?}"' \
     'printf "\\n" >> "${TLD_TEST_CALL_LOG:?}"' \
     'case "${1-}" in' \
@@ -70,6 +82,7 @@ setup() {
     '#!/usr/bin/env bash' \
     'set -Eeuo pipefail' \
     'printf "pkg %s\\n" "$*" >> "${TLD_TEST_PKG_LOG:?}"' \
+    'printf "pkg\\n" >> "${TLD_TEST_EVENT_LOG:?}"' \
     'if [[ "$*" == "install -y proot-distro pulseaudio" ]]; then' \
     '  cp -- "${TLD_TEST_PROOT_STUB:?}" "${TLD_TEST_BIN:?}/proot-distro"' \
     '  cp -- "${TLD_TEST_PACTL_STUB:?}" "${TLD_TEST_BIN:?}/pactl"' \
@@ -80,6 +93,7 @@ setup() {
 
   printf '%s\n' \
     '#!/usr/bin/env bash' \
+    'printf "uname\\n" >> "${TLD_TEST_EVENT_LOG:?}"' \
     'printf "%s\\n" "${TLD_TEST_ARCH:?}"' \
     > "$TLD_TEST_BIN/uname"
 
@@ -108,14 +122,7 @@ setup() {
 }
 
 teardown() {
-  rm -f -- \
-    "$TLD_REPO_ROOT/rootfs/private.secret" \
-    "$TLD_REPO_ROOT/rootfs/example.rootfs" \
-    "$TLD_REPO_ROOT/rootfs/example.log"
-  rm -r -- \
-    "$TLD_REPO_ROOT/rootfs/test-output" \
-    "$TLD_REPO_ROOT/rootfs/game-data" \
-    2>/dev/null || true
+  :
 }
 
 run_toolkit_install() {
@@ -129,6 +136,15 @@ prepare_desktop_test() {
   export TLD_ROOTFS_DIR="$TLD_TEST_ROOTFS_DIR"
   export TLD_ROOTFS_MANIFEST_FILE="$TLD_TEST_MANIFEST_FILE"
   export TLD_GUEST_LOG_FILE="$TLD_LOG_DIR/guest.log"
+}
+
+make_unowned_install_tree() {
+  mkdir -p "$PREFIX/opt/termux-linux-desktop/lib"
+  cp -- "$TLD_REPO_ROOT/lib/tld-common.sh" "$PREFIX/opt/termux-linux-desktop/lib/tld-common.sh"
+}
+
+write_owner_sentinel() {
+  printf '%s\n' 'OWNER=termux-linux-desktop' 'VERSION=0.1.0' > "$PREFIX/opt/termux-linux-desktop/.tld-toolkit-owner"
 }
 
 @test "install-toolkit fails for missing pkg before mutating state" {
@@ -208,6 +224,32 @@ prepare_desktop_test() {
   [[ "$(<"$TLD_TEST_CALL_LOG")" != *'x11-repo'* ]]
 }
 
+@test "desktop-install runs host preflight before the package command" {
+  run_toolkit_install
+  [ "$status" -eq 0 ]
+  rm -f -- "$TLD_TEST_BIN/proot-distro" "$TLD_TEST_BIN/pactl"
+  : > "$TLD_TEST_EVENT_LOG"
+  prepare_desktop_test
+
+  run bash "$PREFIX/bin/desktop-install"
+
+  [ "$status" -eq 0 ]
+  preflight_line=$(grep -n -m1 '^uname$' "$TLD_TEST_EVENT_LOG" | cut -d: -f1)
+  package_line=$(grep -n -m1 '^pkg$' "$TLD_TEST_EVENT_LOG" | cut -d: -f1)
+  [ "$preflight_line" -lt "$package_line" ]
+}
+
+@test "desktop-install skips pkg when all host dependencies are present" {
+  run_toolkit_install
+  [ "$status" -eq 0 ]
+  prepare_desktop_test
+
+  run bash "$PREFIX/bin/desktop-install"
+
+  [ "$status" -eq 0 ]
+  [ ! -s "$TLD_TEST_PKG_LOG" ]
+}
+
 @test "desktop-install does not reinstall an existing rootfs" {
   run_toolkit_install
   [ "$status" -eq 0 ]
@@ -235,6 +277,27 @@ prepare_desktop_test() {
   grep -Fx 'result=failure' "$TLD_STATE_DIR/install.result"
   grep -Fx 'stage=guest-provision' "$TLD_STATE_DIR/install.result"
   grep -F 'guest-provision' "$TLD_LOG_DIR/desktop.log"
+}
+
+@test "failed rerun quarantines the old success marker" {
+  run_toolkit_install
+  [ "$status" -eq 0 ]
+  prepare_desktop_test
+
+  run bash "$PREFIX/bin/desktop-install"
+  [ "$status" -eq 0 ]
+  grep -Fx 'status=installed' "$TLD_INSTANCE_FILE"
+  export TLD_TEST_LOGIN_STATUS=23
+
+  run bash "$PREFIX/bin/desktop-install"
+
+  [ "$status" -eq 23 ]
+  [ ! -e "$TLD_INSTANCE_FILE" ]
+  [ -f "$TLD_STATE_DIR/install.result" ]
+  grep -Fx 'result=failure' "$TLD_STATE_DIR/install.result"
+  backup_manifest=$(compgen -G "$TLD_STATE_DIR/backups/*/instance.env" || true)
+  [ -f "$backup_manifest" ]
+  grep -Fx 'status=installed' "$backup_manifest"
 }
 
 @test "successful install writes the manifest and exact toolkit symlink" {
@@ -271,6 +334,104 @@ prepare_desktop_test() {
   [ ! -e "$PREFIX/opt/termux-linux-desktop" ]
 }
 
+@test "install-toolkit refuses an unrelated directory that contains a shared library" {
+  make_unowned_install_tree
+
+  run_toolkit_install
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"not a toolkit-owned install"* ]]
+  [ -f "$PREFIX/opt/termux-linux-desktop/lib/tld-common.sh" ]
+  [ ! -L "$PREFIX/bin/desktop-install" ]
+}
+
+@test "install-toolkit refuses an invalid owner sentinel" {
+  make_unowned_install_tree
+  printf '%s\n' 'OWNER=other-tool' 'VERSION=0.1.0' > "$PREFIX/opt/termux-linux-desktop/.tld-toolkit-owner"
+
+  run_toolkit_install
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"not a toolkit-owned install"* ]]
+  [ "$(<"$PREFIX/opt/termux-linux-desktop/.tld-toolkit-owner")" = $'OWNER=other-tool\nVERSION=0.1.0' ]
+}
+
+@test "install-toolkit accepts a valid owner sentinel and replaces the tree" {
+  make_unowned_install_tree
+  write_owner_sentinel
+
+  run_toolkit_install
+
+  [ "$status" -eq 0 ]
+  [ -L "$PREFIX/bin/desktop-install" ]
+  grep -Fx 'OWNER=termux-linux-desktop' "$PREFIX/opt/termux-linux-desktop/.tld-toolkit-owner"
+  grep -Fx 'VERSION=0.1.0' "$PREFIX/opt/termux-linux-desktop/.tld-toolkit-owner"
+}
+
+@test "install-toolkit rejects unknown rootfs files instead of copying them" {
+  printf '%s\n' secret > "$TLD_REPO_ROOT/rootfs/config.env"
+
+  run_toolkit_install
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"unknown release file"* ]]
+  [ ! -e "$PREFIX/opt/termux-linux-desktop/rootfs/config.env" ]
+  [ ! -e "$PREFIX/opt/termux-linux-desktop" ]
+}
+
+@test "install-toolkit preserves release file and directory modes" {
+  chmod 0711 "$TLD_REPO_ROOT/bin/desktop-install"
+  chmod 0640 "$TLD_REPO_ROOT/rootfs/ubuntu-24.04.env"
+  chmod 0750 "$TLD_REPO_ROOT/lib"
+
+  run_toolkit_install
+
+  [ "$status" -eq 0 ]
+  [ "$(stat -c '%a' "$PREFIX/opt/termux-linux-desktop/bin/desktop-install")" = 711 ]
+  [ "$(stat -c '%a' "$PREFIX/opt/termux-linux-desktop/rootfs/ubuntu-24.04.env")" = 640 ]
+  [ "$(stat -c '%a' "$PREFIX/opt/termux-linux-desktop/lib")" = 750 ]
+}
+
+@test "install-toolkit rolls back the tree and symlink after a link failure" {
+  run_toolkit_install
+  [ "$status" -eq 0 ]
+  printf '%s\n' old-tree > "$PREFIX/opt/termux-linux-desktop/rollback-marker"
+  old_tree_hash=$(sha256sum "$PREFIX/opt/termux-linux-desktop/bin/desktop-install" | awk '{print $1}')
+  export TLD_TEST_FAIL_LINK=1
+  export TLD_TEST_LINK_FAILED="$TLD_TEST_ROOT/link-failed"
+  printf '%s\n' \
+    '#!/usr/bin/env bash' \
+    'if [[ "${TLD_TEST_FAIL_LINK:-0}" == 1 && ! -e "${TLD_TEST_LINK_FAILED:?}" ]]; then' \
+    '  : > "$TLD_TEST_LINK_FAILED"' \
+    '  exit 73' \
+    'fi' \
+    'exec "${TLD_REAL_LN:?}" "$@"' \
+    > "$TLD_TEST_BIN/ln"
+  chmod +x "$TLD_TEST_BIN/ln"
+
+  run_toolkit_install
+
+  [ "$status" -ne 0 ]
+  [ "$(<"$PREFIX/opt/termux-linux-desktop/rollback-marker")" = old-tree ]
+  [ "$(sha256sum "$PREFIX/opt/termux-linux-desktop/bin/desktop-install" | awk '{print $1}')" = "$old_tree_hash" ]
+  [ "$(readlink "$PREFIX/bin/desktop-install")" = "$PREFIX/opt/termux-linux-desktop/bin/desktop-install" ]
+  ! compgen -G "$PREFIX/opt/.termux-linux-desktop.backup.*" >/dev/null
+  ! compgen -G "$PREFIX/opt/.termux-linux-desktop.stage.*" >/dev/null
+}
+
+@test "install-toolkit replaces an existing toolkit-owned symlink" {
+  run_toolkit_install
+  [ "$status" -eq 0 ]
+  old_target="$PREFIX/opt/termux-linux-desktop/bin/desktop-install"
+  rm -f -- "$PREFIX/bin/desktop-install"
+  ln -s -- "$old_target" "$PREFIX/bin/desktop-install"
+
+  run_toolkit_install
+
+  [ "$status" -eq 0 ]
+  [ "$(readlink "$PREFIX/bin/desktop-install")" = "$old_target" ]
+}
+
 @test "repeated toolkit and desktop installs remain idempotent" {
   run_toolkit_install
   [ "$status" -eq 0 ]
@@ -289,7 +450,7 @@ prepare_desktop_test() {
   [ "$(readlink "$PREFIX/bin/desktop-install")" = "$PREFIX/opt/termux-linux-desktop/bin/desktop-install" ]
 }
 
-@test "staging is cleaned and private artifacts are not copied" {
+@test "staging rejects private artifacts and leaves no staged tree" {
   printf '%s\n' secret > "$TLD_REPO_ROOT/rootfs/private.secret"
   printf '%s\n' archive > "$TLD_REPO_ROOT/rootfs/example.rootfs"
   printf '%s\n' log > "$TLD_REPO_ROOT/rootfs/example.log"
@@ -299,12 +460,13 @@ prepare_desktop_test() {
 
   run_toolkit_install
 
-  [ "$status" -eq 0 ]
+  [ "$status" -ne 0 ]
   [ ! -e "$PREFIX/opt/termux-linux-desktop/rootfs/private.secret" ]
   [ ! -e "$PREFIX/opt/termux-linux-desktop/rootfs/example.rootfs" ]
   [ ! -e "$PREFIX/opt/termux-linux-desktop/rootfs/example.log" ]
   [ ! -e "$PREFIX/opt/termux-linux-desktop/rootfs/test-output" ]
   [ ! -e "$PREFIX/opt/termux-linux-desktop/rootfs/game-data" ]
+  [ ! -e "$PREFIX/opt/termux-linux-desktop" ]
   ! compgen -G "$PREFIX/opt/.termux-linux-desktop.stage.*" >/dev/null
   ! compgen -G "$PREFIX/opt/.termux-linux-desktop.old.*" >/dev/null
   [ ! -e "$PREFIX/opt/termux-linux-desktop/tests" ]

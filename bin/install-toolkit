@@ -34,22 +34,34 @@ if ! tld_check_host_prerequisites install; then
   exit 1
 fi
 
-for TLD_COMMAND in mkdir mktemp cp chmod mv ln readlink stat rm; do
+for TLD_COMMAND in mkdir mktemp cp chmod mv ln readlink stat rm date; do
   tld_require_command "$TLD_COMMAND" >/dev/null 2>&1 || _tld_install_toolkit_fail "required installer command is missing: $TLD_COMMAND"
 done
 
 TLD_OPT_DIR="$PREFIX/opt"
 TLD_INSTALL_DIR="$TLD_OPT_DIR/termux-linux-desktop"
 TLD_BIN_DIR="$PREFIX/bin"
+TLD_OWNER_ID='termux-linux-desktop'
+TLD_OWNER_VERSION='0.1.0'
+
+_tld_toolkit_install_owned() {
+  local owner_file="$1/.tld-toolkit-owner"
+  local -a owner_lines=()
+
+  [[ -d "$1" && ! -L "$1" && -f "$owner_file" && ! -L "$owner_file" ]] || return 1
+  mapfile -t owner_lines < "$owner_file" || return 1
+  (( ${#owner_lines[@]} == 2 )) || return 1
+  [[ "${owner_lines[0]}" == "OWNER=$TLD_OWNER_ID" && "${owner_lines[1]}" == "VERSION=$TLD_OWNER_VERSION" ]]
+}
 
 [[ ! -L "$TLD_OPT_DIR" ]] || _tld_install_toolkit_fail "managed parent is a symlink: $TLD_OPT_DIR"
 if [[ -e "$TLD_OPT_DIR" && ! -d "$TLD_OPT_DIR" ]]; then
   _tld_install_toolkit_fail "managed parent is not a directory: $TLD_OPT_DIR"
 fi
-if [[ -d "$TLD_INSTALL_DIR" && ! -f "$TLD_INSTALL_DIR/lib/tld-common.sh" ]]; then
-  _tld_install_toolkit_fail "existing install is not a toolkit install: $TLD_INSTALL_DIR"
-fi
 [[ ! -L "$TLD_INSTALL_DIR" ]] || _tld_install_toolkit_fail "existing install is a symlink: $TLD_INSTALL_DIR"
+if [[ -d "$TLD_INSTALL_DIR" ]]; then
+  _tld_toolkit_install_owned "$TLD_INSTALL_DIR" || _tld_install_toolkit_fail "existing install is not a toolkit-owned install: $TLD_INSTALL_DIR"
+fi
 
 [[ ! -L "$TLD_BIN_DIR" ]] || _tld_install_toolkit_fail "command directory is a symlink: $TLD_BIN_DIR"
 if [[ -e "$TLD_BIN_DIR" && ! -d "$TLD_BIN_DIR" ]]; then
@@ -58,21 +70,20 @@ fi
 
 mkdir -p -- "$TLD_OPT_DIR" "$TLD_BIN_DIR"
 
-_tld_stage_skip() {
+_tld_stage_allowed_file() {
   local relative_path="${1-}"
-  local name="${relative_path##*/}"
 
-  case "$name" in
-    .git|.mcp.json|.env.local|.env.*.local|*.log|*.tmp|*.swp|*.swo|*.tar|*.tar.*|*.rootfs|*.zip|*.7z|*.gz|*.bz2|*.xz|*.zst|*.iso|*.img|*.obb|*.pak|*.sav|*.pem|*.key|*.private|*.secret|private*|secret*|credential*|token*|password*|passwd*|id_rsa)
-      return 0
-      ;;
-  esac
   case "$relative_path" in
-    */.git|*/.git/*|*/coverage|*/coverage/*|*/test-output|*/test-output/*|*/logs|*/logs/*|*/log|*/log/*|*/.cache|*/.cache/*|*/dist|*/dist/*|*/release|*/release/*|*/acceptance|*/acceptance/*|*/game|*/game/*|*/games|*/games/*|*/game-data|*/game-data/*|*/steam|*/steam/*|*/wine|*/wine/*)
+    bin/install-toolkit|bin/desktop-install|bin/desktop-start|bin/desktop-stop|bin/desktop-status|bin/desktop-doctor|bin/desktop-profile|bin/desktop-reset)
       return 0
       ;;
+    lib/tld-*.sh|profiles/base.env|rootfs/ubuntu-24.04.env|docs/*.md|docs/*.txt)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
   esac
-  return 1
 }
 
 _tld_stage_copy_tree() {
@@ -81,10 +92,20 @@ _tld_stage_copy_tree() {
   local relative_path="$3"
   local child_path child_name mode
 
-  _tld_stage_skip "$relative_path" && return 0
-  [[ ! -L "$source_path" ]] || return 0
+  [[ ! -L "$source_path" ]] || {
+    printf 'FAIL unknown release path is a symlink: %s\n' "$relative_path" >&2
+    return 1
+  }
 
   if [[ -d "$source_path" ]]; then
+    case "$relative_path" in
+      bin|lib|profiles|rootfs|docs|docs/*)
+        ;;
+      *)
+        printf 'FAIL unknown release directory: %s\n' "$relative_path" >&2
+        return 1
+        ;;
+    esac
     mkdir -p -- "$destination_path"
     mode=$(stat -c '%a' -- "$source_path") || return 1
     chmod "$mode" "$destination_path" || return 1
@@ -95,43 +116,25 @@ _tld_stage_copy_tree() {
     return 0
   fi
 
-  [[ -f "$source_path" ]] || return 0
+  [[ -f "$source_path" ]] || {
+    printf 'FAIL unknown release path: %s\n' "$relative_path" >&2
+    return 1
+  }
+  _tld_stage_allowed_file "$relative_path" || {
+    printf 'FAIL unknown release file: %s\n' "$relative_path" >&2
+    return 1
+  }
   cp -p -- "$source_path" "$destination_path"
 }
 
 TLD_STAGE_DIR=''
 TLD_BACKUP_DIR=''
-
-_tld_install_toolkit_cleanup() {
-  local result=$?
-  if [[ -n "$TLD_STAGE_DIR" && -d "$TLD_STAGE_DIR" ]]; then
-    rm -r -- "$TLD_STAGE_DIR" || true
-  fi
-  if [[ -n "$TLD_BACKUP_DIR" && -d "$TLD_BACKUP_DIR" ]]; then
-    rm -r -- "$TLD_BACKUP_DIR" || true
-  fi
-  exit "$result"
-}
-trap _tld_install_toolkit_cleanup EXIT
-
-if ! TLD_STAGE_DIR=$(mktemp -d "$TLD_OPT_DIR/.termux-linux-desktop.stage.XXXXXXXX"); then
-  _tld_install_toolkit_fail "cannot create staging directory under $TLD_OPT_DIR"
-fi
-
-for TLD_STAGE_NAME in bin lib profiles rootfs docs; do
-  if [[ -d "$TLD_REPO_ROOT/$TLD_STAGE_NAME" ]]; then
-    _tld_stage_copy_tree "$TLD_REPO_ROOT/$TLD_STAGE_NAME" "$TLD_STAGE_DIR/$TLD_STAGE_NAME" "$TLD_STAGE_NAME" || _tld_install_toolkit_fail "cannot stage $TLD_STAGE_NAME"
-  fi
-done
-
-TLD_PUBLIC_COMMANDS=(desktop-install desktop-start desktop-stop desktop-status desktop-doctor desktop-profile desktop-reset)
-TLD_LINK_COMMANDS=()
-for TLD_COMMAND in "${TLD_PUBLIC_COMMANDS[@]}"; do
-  if [[ -f "$TLD_STAGE_DIR/bin/$TLD_COMMAND" ]]; then
-    [[ -x "$TLD_STAGE_DIR/bin/$TLD_COMMAND" ]] || _tld_install_toolkit_fail "public command is not executable: $TLD_COMMAND"
-    TLD_LINK_COMMANDS+=("$TLD_COMMAND")
-  fi
-done
+TLD_TRANSACTION_ACTIVE=0
+TLD_OLD_TREE_MOVED=0
+TLD_NEW_TREE_INSTALLED=0
+TLD_PRESERVE_BACKUP=0
+declare -A TLD_LINK_STATE=()
+declare -A TLD_LINK_TARGET=()
 
 _tld_link_points_into_install() {
   local link_path="$1"
@@ -157,43 +160,188 @@ _tld_link_points_into_install() {
   esac
 }
 
+_tld_remove_toolkit_link() {
+  local link_path="$1"
+
+  if [[ -L "$link_path" ]]; then
+    _tld_link_points_into_install "$link_path" || return 1
+    rm -f -- "$link_path"
+  elif [[ -e "$link_path" ]]; then
+    return 1
+  fi
+}
+
+_tld_restore_link_state() {
+  local command_name link_path
+
+  for command_name in "${TLD_LINK_COMMANDS[@]}"; do
+    link_path="$TLD_BIN_DIR/$command_name"
+    case "${TLD_LINK_STATE[$command_name]}" in
+      symlink)
+        if [[ -e "$link_path" || -L "$link_path" ]]; then
+          _tld_remove_toolkit_link "$link_path" || return 1
+        fi
+        ln -s -- "${TLD_LINK_TARGET[$command_name]}" "$link_path" || return 1
+        ;;
+      absent)
+        if [[ -e "$link_path" || -L "$link_path" ]]; then
+          _tld_remove_toolkit_link "$link_path" || return 1
+        fi
+        ;;
+      *)
+        return 1
+        ;;
+    esac
+  done
+}
+
+_tld_install_toolkit_rollback() {
+  local result=0
+
+  if [[ -n "$TLD_STAGE_DIR" && -d "$TLD_STAGE_DIR" ]]; then
+    if rm -r -- "$TLD_STAGE_DIR"; then
+      TLD_STAGE_DIR=''
+    else
+      result=1
+    fi
+  fi
+
+  if (( TLD_NEW_TREE_INSTALLED == 1 )); then
+    if [[ -d "$TLD_INSTALL_DIR" ]] && _tld_toolkit_install_owned "$TLD_INSTALL_DIR"; then
+      if rm -r -- "$TLD_INSTALL_DIR"; then
+        TLD_NEW_TREE_INSTALLED=0
+      else
+        result=1
+      fi
+    else
+      result=1
+    fi
+  fi
+
+  if (( TLD_OLD_TREE_MOVED == 1 )) && [[ -n "$TLD_BACKUP_DIR" && -d "$TLD_BACKUP_DIR/tree" ]]; then
+    if [[ -e "$TLD_INSTALL_DIR" || -L "$TLD_INSTALL_DIR" ]]; then
+      result=1
+    elif ! mv -T -- "$TLD_BACKUP_DIR/tree" "$TLD_INSTALL_DIR"; then
+      result=1
+    else
+      TLD_OLD_TREE_MOVED=0
+    fi
+  fi
+
+  _tld_restore_link_state || result=1
+  if (( result == 0 )); then
+    if [[ -n "$TLD_BACKUP_DIR" && -d "$TLD_BACKUP_DIR" ]]; then
+      if rm -r -- "$TLD_BACKUP_DIR"; then
+        TLD_BACKUP_DIR=''
+      else
+        TLD_PRESERVE_BACKUP=1
+        result=1
+      fi
+    fi
+  else
+    TLD_PRESERVE_BACKUP=1
+  fi
+  TLD_TRANSACTION_ACTIVE=0
+  return "$result"
+}
+
+_tld_install_toolkit_cleanup() {
+  local result=$?
+
+  if (( result != 0 && TLD_TRANSACTION_ACTIVE == 1 )); then
+    _tld_install_toolkit_rollback || result=1
+  fi
+  if [[ -n "$TLD_STAGE_DIR" && -d "$TLD_STAGE_DIR" ]]; then
+    rm -r -- "$TLD_STAGE_DIR" || true
+  fi
+  if [[ -n "$TLD_BACKUP_DIR" && -d "$TLD_BACKUP_DIR" && TLD_PRESERVE_BACKUP == 0 ]]; then
+    rm -r -- "$TLD_BACKUP_DIR" || true
+  fi
+  exit "$result"
+}
+trap _tld_install_toolkit_cleanup EXIT
+
+if ! TLD_STAGE_DIR=$(mktemp -d "$TLD_OPT_DIR/.termux-linux-desktop.stage.XXXXXXXX"); then
+  _tld_install_toolkit_fail "cannot create staging directory under $TLD_OPT_DIR"
+fi
+
+for TLD_STAGE_NAME in bin lib profiles rootfs docs; do
+  if [[ -d "$TLD_REPO_ROOT/$TLD_STAGE_NAME" ]]; then
+    _tld_stage_copy_tree "$TLD_REPO_ROOT/$TLD_STAGE_NAME" "$TLD_STAGE_DIR/$TLD_STAGE_NAME" "$TLD_STAGE_NAME" || _tld_install_toolkit_fail "cannot stage $TLD_STAGE_NAME"
+  fi
+done
+
+if ! {
+  printf 'OWNER=%s\n' "$TLD_OWNER_ID"
+  printf 'VERSION=%s\n' "$TLD_OWNER_VERSION"
+} > "$TLD_STAGE_DIR/.tld-toolkit-owner"; then
+  _tld_install_toolkit_fail 'cannot write toolkit ownership sentinel'
+fi
+chmod 600 "$TLD_STAGE_DIR/.tld-toolkit-owner" || _tld_install_toolkit_fail 'cannot protect toolkit ownership sentinel'
+
+TLD_PUBLIC_COMMANDS=(desktop-install desktop-start desktop-stop desktop-status desktop-doctor desktop-profile desktop-reset)
+TLD_LINK_COMMANDS=()
+for TLD_COMMAND in "${TLD_PUBLIC_COMMANDS[@]}"; do
+  if [[ -f "$TLD_STAGE_DIR/bin/$TLD_COMMAND" ]]; then
+    [[ -x "$TLD_STAGE_DIR/bin/$TLD_COMMAND" ]] || _tld_install_toolkit_fail "public command is not executable: $TLD_COMMAND"
+    TLD_LINK_COMMANDS+=("$TLD_COMMAND")
+  fi
+done
+
 for TLD_COMMAND in "${TLD_LINK_COMMANDS[@]}"; do
   TLD_LINK_PATH="$TLD_BIN_DIR/$TLD_COMMAND"
   if [[ -e "$TLD_LINK_PATH" || -L "$TLD_LINK_PATH" ]]; then
     [[ -L "$TLD_LINK_PATH" ]] || _tld_install_toolkit_fail "refusing to overwrite non-toolkit path: $TLD_LINK_PATH"
     _tld_link_points_into_install "$TLD_LINK_PATH" || _tld_install_toolkit_fail "refusing to overwrite non-toolkit symlink: $TLD_LINK_PATH"
+    TLD_LINK_STATE["$TLD_COMMAND"]='symlink'
+    TLD_LINK_TARGET["$TLD_COMMAND"]=$(readlink -- "$TLD_LINK_PATH") || _tld_install_toolkit_fail "cannot record toolkit symlink: $TLD_LINK_PATH"
+  else
+    TLD_LINK_STATE["$TLD_COMMAND"]='absent'
+    TLD_LINK_TARGET["$TLD_COMMAND"]=''
   fi
 done
 
+TLD_TRANSACTION_ACTIVE=1
 if [[ -d "$TLD_INSTALL_DIR" ]]; then
-  if ! TLD_BACKUP_DIR=$(mktemp -d "$TLD_OPT_DIR/.termux-linux-desktop.old.XXXXXXXX"); then
+  TLD_BACKUP_TIMESTAMP=$(date -u '+%Y%m%dT%H%M%SZ') || _tld_install_toolkit_fail 'cannot timestamp toolkit backup'
+  if ! TLD_BACKUP_DIR=$(mktemp -d "$TLD_OPT_DIR/.termux-linux-desktop.backup.$TLD_BACKUP_TIMESTAMP.XXXXXXXX"); then
     _tld_install_toolkit_fail "cannot create replacement directory under $TLD_OPT_DIR"
   fi
   if ! mv -T -- "$TLD_INSTALL_DIR" "$TLD_BACKUP_DIR/tree"; then
-    _tld_install_toolkit_fail "cannot stage the existing toolkit install for replacement"
+    _tld_install_toolkit_fail "cannot move the existing toolkit install to backup"
   fi
+  TLD_OLD_TREE_MOVED=1
 fi
 
 if mv -T -- "$TLD_STAGE_DIR" "$TLD_INSTALL_DIR"; then
   TLD_STAGE_DIR=''
+  TLD_NEW_TREE_INSTALLED=1
 else
-  if [[ -n "$TLD_BACKUP_DIR" && -d "$TLD_BACKUP_DIR/tree" ]]; then
-    mv -T -- "$TLD_BACKUP_DIR/tree" "$TLD_INSTALL_DIR" || true
-  fi
+  _tld_install_toolkit_rollback || true
   _tld_install_toolkit_fail "cannot atomically install the toolkit tree"
-fi
-
-if [[ -n "$TLD_BACKUP_DIR" && -d "$TLD_BACKUP_DIR" ]]; then
-  rm -r -- "$TLD_BACKUP_DIR"
-  TLD_BACKUP_DIR=''
 fi
 
 for TLD_COMMAND in "${TLD_LINK_COMMANDS[@]}"; do
   TLD_LINK_PATH="$TLD_BIN_DIR/$TLD_COMMAND"
   if [[ -L "$TLD_LINK_PATH" ]]; then
-    rm -f -- "$TLD_LINK_PATH"
+    if ! rm -f -- "$TLD_LINK_PATH"; then
+      _tld_install_toolkit_rollback || true
+      _tld_install_toolkit_fail "cannot remove the existing toolkit symlink: $TLD_LINK_PATH"
+    fi
   fi
-  ln -s -- "$TLD_INSTALL_DIR/bin/$TLD_COMMAND" "$TLD_LINK_PATH"
+  if ! ln -s -- "$TLD_INSTALL_DIR/bin/$TLD_COMMAND" "$TLD_LINK_PATH"; then
+    _tld_install_toolkit_rollback || true
+    _tld_install_toolkit_fail "cannot create toolkit symlink: $TLD_LINK_PATH"
+  fi
 done
+
+TLD_TRANSACTION_ACTIVE=0
+if [[ -n "$TLD_BACKUP_DIR" && -d "$TLD_BACKUP_DIR" ]]; then
+  if rm -r -- "$TLD_BACKUP_DIR"; then
+    TLD_BACKUP_DIR=''
+  else
+    printf 'WARN toolkit backup could not be removed: %s\n' "$TLD_BACKUP_DIR" >&2
+  fi
+fi
 
 printf '%s\n' desktop-install

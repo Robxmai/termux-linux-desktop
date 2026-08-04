@@ -63,6 +63,28 @@ tld_install_dependencies_missing() {
   return 1
 }
 
+tld_install_quarantine_success_marker() {
+  local backup_parent="$TLD_STATE_DIR/backups"
+  local timestamp backup_dir
+
+  if [[ ! -e "$TLD_INSTANCE_FILE" && ! -L "$TLD_INSTANCE_FILE" ]]; then
+    return 0
+  fi
+  if [[ -L "$backup_parent" || ( -e "$backup_parent" && ! -d "$backup_parent" ) ]]; then
+    printf 'install backup path is not a directory: %s\n' "$backup_parent" >&2
+    return 1
+  fi
+
+  timestamp=$(date -u '+%Y%m%dT%H%M%SZ') || return 1
+  mkdir -p -- "$backup_parent" || return 1
+  backup_dir=$(mktemp -d "$backup_parent/$timestamp.XXXXXXXX") || return 1
+  if mv -- "$TLD_INSTANCE_FILE" "$backup_dir/instance.env"; then
+    return 0
+  fi
+  rm -r -- "$backup_dir" || true
+  return 1
+}
+
 tld_install_main() {
   local result architecture
 
@@ -72,6 +94,15 @@ tld_install_main() {
     return 1
   fi
   TLD_INSTALL_RESULT_FILE="$TLD_STATE_DIR/install.result"
+
+  TLD_INSTALL_STAGE=quarantine
+  if tld_install_quarantine_success_marker; then
+    :
+  else
+    result=$?
+    tld_install_fail "$TLD_INSTALL_STAGE" "$result" 'active install marker could not be quarantined'
+    return "$result"
+  fi
 
   if [[ "${TLD_TEST_MODE:-0}" != 1 ]]; then
     TLD_ROOTFS_ENV_FILE="$TLD_TOOLKIT_ROOT/rootfs/ubuntu-24.04.env"

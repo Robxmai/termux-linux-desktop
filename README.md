@@ -26,35 +26,33 @@ legally entitled to use.
   `termux-x11-nightly` companion package inside Termux.
 - The standard Termux core utilities must include `flock`; it is required for
   process ownership locking.
-- Network access for package installation and updates.
+- Network access for package and rootfs installation.
 - A backup of any personal configuration before recovery or reinstallation.
 
 ## First Run
 
-Run these commands from the Termux host:
+Install the matching Termux and Termux:X11 Android applications from either
+F-Droid or the official GitHub releases. Install the matching
+`termux-x11-nightly` companion package from the same source family; do not mix
+F-Droid and GitHub builds.
+
+From the repository checkout, run these commands in the Termux host:
 
 ```sh
-pkg update && pkg upgrade
-pkg install x11-repo proot-distro termux-x11-nightly
+pkg install -y proot-distro pulseaudio
 command -v flock
-proot-distro install debian
-termux-x11 :0 &
-proot-distro login debian --shared-tmp
+bash bin/install-toolkit
+desktop-install
 ```
 
-After `proot-distro login debian --shared-tmp` opens the Debian PRoot guest,
-run these commands inside the guest:
+`desktop-install` creates the pinned Ubuntu 24.04 PRoot guest named
+`tld-ubuntu`, provisions the non-root `tld` user, and installs the base XFCE
+desktop. Start the matching Termux:X11 Android app before launching the
+desktop; installation warns when its socket is not ready.
 
-```sh
-apt update
-apt install xfce4 dbus-x11
-export DISPLAY=:0
-startxfce4
-```
-
-This is a minimal bootstrap sequence, not a guarantee of application or game
-compatibility. Box64, Box86, and Wine are optional and should be added only
-after the base desktop starts reliably.
+The base installation does not require package upgrades, repository changes,
+GPU acceleration, Box64, Box86, Wine, Steam, or game packages. Add optional
+compatibility layers only after the base desktop starts reliably.
 
 ## Support
 
@@ -67,14 +65,13 @@ include account sign-in material or internal network details.
 ## Recovery
 
 1. Exit XFCE and the PRoot session, then stop the Termux:X11 process.
-2. Update Termux packages and retry the base desktop before adding optional
-   compatibility components.
-3. If the Debian environment is disposable, remove and recreate it:
+2. Retry `desktop-install` before adding optional compatibility components.
+3. If the Ubuntu environment is disposable, remove and recreate it:
 
-   ```sh
-   proot-distro remove debian
-   proot-distro install debian
-   ```
+    ```sh
+    proot-distro remove tld-ubuntu
+    desktop-install
+    ```
 
    Back up personal configuration first. Reinstalling the environment deletes
    its files.
