@@ -1,0 +1,86 @@
+#!/data/data/com.termux/files/usr/bin/bash
+set -Eeuo pipefail
+
+if ! TLD_SCRIPT_PATH=$(readlink -f -- "${BASH_SOURCE[0]}"); then
+  printf '%s\n' 'FAIL cannot resolve desktop doctor path' >&2
+  exit 1
+fi
+TLD_SCRIPT_DIR=${TLD_SCRIPT_PATH%/bin/*}/bin
+TLD_TOOLKIT_ROOT=${TLD_SCRIPT_DIR%/bin}
+
+[[ -n ${PREFIX:-} ]] || {
+  printf '%s\n' 'FAIL PREFIX is unset' >&2
+  exit 1
+}
+[[ -n ${HOME:-} ]] || {
+  printf '%s\n' 'FAIL HOME is unset' >&2
+  exit 1
+}
+
+source "$TLD_TOOLKIT_ROOT/lib/tld-common.sh"
+source "$TLD_TOOLKIT_ROOT/lib/tld-manifest.sh"
+source "$TLD_TOOLKIT_ROOT/lib/tld-guest.sh"
+
+if [[ $# -ne 1 || "${1-}" != '--install-mode' ]]; then
+  printf '%s\n' 'FAIL usage: desktop-doctor --install-mode' >&2
+  exit 2
+fi
+
+TLD_DOCTOR_RESULT=0
+TLD_DOCTOR_ROOTFS_DIR=''
+
+tld_doctor_fail() {
+  printf 'FAIL %s\n' "$*"
+  TLD_DOCTOR_RESULT=1
+}
+
+if ! tld_init_managed_paths; then
+  tld_doctor_fail 'managed paths could not be initialized'
+fi
+
+unset action manifest_version toolkit_version status profile rootfs_image rootfs_container
+if [[ -L "${TLD_INSTANCE_FILE:-}" || ! -f "${TLD_INSTANCE_FILE:-}" ]]; then
+  tld_doctor_fail "runtime manifest is missing or is not a regular file: ${TLD_INSTANCE_FILE:-unset}"
+elif tld_read_env_file "$TLD_INSTANCE_FILE" &&
+  [[ "${manifest_version-}" == 1 &&
+    "${toolkit_version-}" == 0.1.0 &&
+    "${status-}" == installed &&
+    "${profile-}" == base &&
+    "${rootfs_image-}" == ubuntu:24.04 &&
+    "${rootfs_container-}" == tld-ubuntu ]]; then
+  printf 'PASS runtime manifest status=%s profile=%s\n' "$status" "$profile"
+else
+  tld_doctor_fail 'runtime manifest is missing required installed base values'
+fi
+
+if _tld_guest_prepare_paths && _tld_guest_load_rootfs_env; then
+  if TLD_DOCTOR_ROOTFS_DIR=$(_tld_guest_rootfs_dir); then
+    if [[ -d "$TLD_DOCTOR_ROOTFS_DIR" && ! -L "$TLD_DOCTOR_ROOTFS_DIR" ]]; then
+      printf 'PASS rootfs directory=%s\n' "$TLD_DOCTOR_ROOTFS_DIR"
+      if TLD_DOCTOR_MANIFEST_FILE=$(_tld_guest_manifest_path "$TLD_DOCTOR_ROOTFS_DIR") &&
+        [[ ! -L "$TLD_DOCTOR_MANIFEST_FILE" ]]; then
+        printf 'PASS rootfs manifest=%s\n' "$TLD_DOCTOR_MANIFEST_FILE"
+      else
+        tld_doctor_fail "rootfs manifest is missing or is a symlink: $TLD_DOCTOR_ROOTFS_DIR"
+      fi
+    else
+      tld_doctor_fail "rootfs directory is missing or is a symlink: $TLD_DOCTOR_ROOTFS_DIR"
+    fi
+  else
+    tld_doctor_fail 'rootfs path could not be derived from the pinned environment'
+  fi
+else
+  tld_doctor_fail 'pinned rootfs environment could not be loaded'
+fi
+
+if [[ -n "$TLD_DOCTOR_ROOTFS_DIR" &&
+  -f "$TLD_DOCTOR_ROOTFS_DIR/usr/local/lib/termux-linux-desktop/start-guest.sh" &&
+  ! -L "$TLD_DOCTOR_ROOTFS_DIR/usr/local/lib/termux-linux-desktop/start-guest.sh" &&
+  -x "$TLD_DOCTOR_ROOTFS_DIR/usr/local/lib/termux-linux-desktop/start-guest.sh" ]]; then
+  printf 'PASS guest launcher=%s\n' "$TLD_DOCTOR_ROOTFS_DIR/usr/local/lib/termux-linux-desktop/start-guest.sh"
+else
+  tld_doctor_fail "guest launcher is missing or not executable: ${TLD_DOCTOR_ROOTFS_DIR:-unknown}/usr/local/lib/termux-linux-desktop/start-guest.sh"
+fi
+
+printf '%s\n' 'WARN GPU/Wine checks skipped in install mode; neither is required by the base profile'
+exit "$TLD_DOCTOR_RESULT"

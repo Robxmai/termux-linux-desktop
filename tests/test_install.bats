@@ -44,6 +44,8 @@ setup() {
 
   export TLD_REAL_PATH="$PATH"
   export TLD_REAL_LN="$(PATH="$TLD_REAL_PATH" command -v ln)"
+  export TLD_REAL_MV="$(PATH="$TLD_REAL_PATH" command -v mv)"
+  export TLD_REAL_RM="$(PATH="$TLD_REAL_PATH" command -v rm)"
   export PATH="$TLD_TEST_BIN:$TLD_REAL_PATH"
 
   printf '%s\n' \
@@ -63,6 +65,9 @@ setup() {
     '    exit "${TLD_TEST_INSTALL_STATUS:-0}"' \
     '    ;;' \
     '  login)' \
+    '    mkdir -p "${TLD_TEST_ROOTFS_DIR:?}/usr/local/lib/termux-linux-desktop"' \
+    '    printf "%s\\n" "#!/usr/bin/env bash" > "${TLD_TEST_ROOTFS_DIR:?}/usr/local/lib/termux-linux-desktop/start-guest.sh"' \
+    '    chmod +x "${TLD_TEST_ROOTFS_DIR:?}/usr/local/lib/termux-linux-desktop/start-guest.sh"' \
     '    exit "${TLD_TEST_LOGIN_STATUS:-0}"' \
     '    ;;' \
     'esac' \
@@ -183,31 +188,53 @@ write_owner_sentinel() {
   [ ! -e "$TLD_INSTANCE_FILE" ]
 }
 
-@test "desktop-install calls guest stages in order" {
-  export TLD_TEST_MODE=1
+@test "base profile is exact and safe-parser compatible" {
+  profile_file="$TLD_CHECKOUT_ROOT/profiles/base.env"
+  expected=(
+    'PROFILE_NAME=base'
+    'PROFILE_VERSION=1'
+    'DISPLAY_DEFAULT=:0'
+    'PULSE_SERVER_DEFAULT=tcp:127.0.0.1:4713'
+    'GUEST_CONTAINER=tld-ubuntu'
+    'GUEST_USER=tld'
+    'REQUIRES_GPU=false'
+    'REQUIRES_WINE=false'
+  )
+
+  [ -f "$profile_file" ]
+  mapfile -t profile_lines < "$profile_file"
+  [ "${profile_lines[*]}" = "${expected[*]}" ]
+
+  source "$TLD_LIB_DIR/tld-common.sh"
+  unset PROFILE_NAME PROFILE_VERSION DISPLAY_DEFAULT PULSE_SERVER_DEFAULT GUEST_CONTAINER GUEST_USER REQUIRES_GPU REQUIRES_WINE
+  tld_read_env_file "$profile_file"
+  [ "$PROFILE_NAME" = base ]
+  [ "$PROFILE_VERSION" = 1 ]
+  [ "$DISPLAY_DEFAULT" = :0 ]
+  [ "$PULSE_SERVER_DEFAULT" = tcp:127.0.0.1:4713 ]
+  [ "$GUEST_CONTAINER" = tld-ubuntu ]
+  [ "$GUEST_USER" = tld ]
+  [ "$REQUIRES_GPU" = false ]
+  [ "$REQUIRES_WINE" = false ]
+}
+
+@test "desktop-install completes base installation stages in order" {
+  run_toolkit_install
+  [ "$status" -eq 0 ]
+  rm -f -- "$TLD_TEST_BIN/proot-distro" "$TLD_TEST_BIN/pactl"
+  prepare_desktop_test
   export TLD_TEST_STAGE_LOG="$TLD_TEST_ROOT/stages.log"
   : > "$TLD_TEST_STAGE_LOG"
 
-  run bash -c '
-    source "$TLD_REPO_ROOT/bin/desktop-install"
-    tld_guest_install_rootfs() {
-      printf "%s\\n" rootfs >> "$TLD_TEST_STAGE_LOG"
-      TLD_ROOTFS_IMAGE=ubuntu:24.04
-      TLD_ROOTFS_CONTAINER=tld-ubuntu
-      TLD_GUEST_ROOTFS_MANIFEST_SHA256="$TLD_TEST_MANIFEST_SHA256"
-    }
-    tld_guest_provision() {
-      printf "%s\\n" guest-provision >> "$TLD_TEST_STAGE_LOG"
-    }
-    tld_guest_copy_launcher() {
-      printf "%s\\n" guest-launcher >> "$TLD_TEST_STAGE_LOG"
-    }
-    tld_install_main
-  '
+  run bash "$PREFIX/bin/desktop-install"
 
   [ "$status" -eq 0 ]
   mapfile -t stages < "$TLD_TEST_STAGE_LOG"
-  [ "${stages[*]}" = 'rootfs guest-provision guest-launcher' ]
+  [ "${stages[*]}" = 'preflight package rootfs-install guest-provision launcher-copy base-profile manifest-commit doctor' ]
+  mapfile -t call_stages < <(sed -n 's/^stage //p' "$TLD_TEST_CALL_LOG")
+  [ "${call_stages[*]}" = 'preflight package rootfs-install guest-provision launcher-copy base-profile manifest-commit doctor' ]
+  [ -f "$PREFIX/opt/termux-linux-desktop/profiles/base.env" ]
+  [ -L "$PREFIX/bin/desktop-doctor" ]
 }
 
 @test "desktop-install runs the exact package command once" {
@@ -298,6 +325,128 @@ write_owner_sentinel() {
   backup_manifest=$(compgen -G "$TLD_STATE_DIR/backups/*/instance.env" || true)
   [ -f "$backup_manifest" ]
   grep -Fx 'status=installed' "$backup_manifest"
+}
+
+@test "quarantine mv failure removes the old success marker and reports failure" {
+  run_toolkit_install
+  [ "$status" -eq 0 ]
+  prepare_desktop_test
+
+  run bash "$PREFIX/bin/desktop-install"
+  [ "$status" -eq 0 ]
+  grep -Fx 'status=installed' "$TLD_INSTANCE_FILE"
+
+  printf '%s\n' \
+    '#!/usr/bin/env bash' \
+    'if [[ "$*" == *"/backups/"* ]]; then' \
+    '  printf "%s\\n" "injected quarantine mv failure" >&2' \
+    '  exit 73' \
+    'fi' \
+    'exec "${TLD_REAL_MV:?}" "$@"' \
+    > "$TLD_TEST_BIN/mv"
+  chmod +x "$TLD_TEST_BIN/mv"
+
+  run bash "$PREFIX/bin/desktop-install"
+
+  [ "$status" -ne 0 ]
+  [ ! -e "$TLD_INSTANCE_FILE" ]
+  [[ "$output" == *'quarantine move failed'* ]]
+  [[ "$output" == *'FAIL install stage=quarantine'* ]]
+  grep -Fx 'result=failure' "$TLD_STATE_DIR/install.result"
+  grep -Fx 'stage=quarantine' "$TLD_STATE_DIR/install.result"
+  backup_manifest=$(compgen -G "$TLD_STATE_DIR/backups/*/instance.env" || true)
+  [ -f "$backup_manifest" ]
+  grep -Fx 'status=installed' "$backup_manifest"
+}
+
+@test "quarantine removal failure reports both errors without claiming cleanup" {
+  run_toolkit_install
+  [ "$status" -eq 0 ]
+  prepare_desktop_test
+
+  run bash "$PREFIX/bin/desktop-install"
+  [ "$status" -eq 0 ]
+
+  export TLD_TEST_ACTIVE_MARKER="$TLD_INSTANCE_FILE"
+  printf '%s\n' \
+    '#!/usr/bin/env bash' \
+    'if [[ "$*" == *"/backups/"* ]]; then' \
+    '  printf "%s\\n" "injected quarantine mv failure" >&2' \
+    '  exit 73' \
+    'fi' \
+    'exec "${TLD_REAL_MV:?}" "$@"' \
+    > "$TLD_TEST_BIN/mv"
+  chmod +x "$TLD_TEST_BIN/mv"
+  printf '%s\n' \
+    '#!/usr/bin/env bash' \
+    'if [[ "$*" == *"${TLD_TEST_ACTIVE_MARKER:?}"* ]]; then' \
+    '  printf "%s\\n" "injected quarantine rm failure" >&2' \
+    '  exit 74' \
+    'fi' \
+    'exec "${TLD_REAL_RM:?}" "$@"' \
+    > "$TLD_TEST_BIN/rm"
+  chmod +x "$TLD_TEST_BIN/rm"
+
+  run bash "$PREFIX/bin/desktop-install"
+
+  [ "$status" -ne 0 ]
+  [ -f "$TLD_INSTANCE_FILE" ]
+  [[ "$output" == *'quarantine move failed'* ]]
+  [[ "$output" == *'quarantine active marker removal failed'* ]]
+  [[ "$output" != *'removed active install marker'* ]]
+}
+
+@test "desktop-doctor install mode passes without GPU or Wine" {
+  run_toolkit_install
+  [ "$status" -eq 0 ]
+  prepare_desktop_test
+
+  run bash "$PREFIX/bin/desktop-install"
+  [ "$status" -eq 0 ]
+
+  run bash "$PREFIX/bin/desktop-doctor" --install-mode
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'PASS runtime manifest'* ]]
+  [[ "$output" == *'PASS guest launcher'* ]]
+  [[ "$output" == *'WARN GPU/Wine checks skipped in install mode'* ]]
+  [[ "$output" != *'FAIL GPU'* ]]
+  [[ "$output" != *'FAIL Wine'* ]]
+}
+
+@test "desktop-doctor install mode fails for a missing guest launcher" {
+  run_toolkit_install
+  [ "$status" -eq 0 ]
+  prepare_desktop_test
+
+  run bash "$PREFIX/bin/desktop-install"
+  [ "$status" -eq 0 ]
+  rm -f -- "$TLD_TEST_ROOTFS_DIR/usr/local/lib/termux-linux-desktop/start-guest.sh"
+
+  run bash "$PREFIX/bin/desktop-doctor" --install-mode
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'FAIL guest launcher'* ]]
+}
+
+@test "desktop-install removes the success marker when doctor fails" {
+  run_toolkit_install
+  [ "$status" -eq 0 ]
+  prepare_desktop_test
+  printf '%s\n' \
+    '#!/usr/bin/env bash' \
+    'printf "%s\\n" "FAIL injected doctor failure" >&2' \
+    'exit 19' \
+    > "$PREFIX/opt/termux-linux-desktop/bin/desktop-doctor"
+  chmod +x "$PREFIX/opt/termux-linux-desktop/bin/desktop-doctor"
+
+  run bash "$PREFIX/bin/desktop-install"
+
+  [ "$status" -eq 19 ]
+  [ ! -e "$TLD_INSTANCE_FILE" ]
+  grep -Fx 'result=failure' "$TLD_STATE_DIR/install.result"
+  grep -Fx 'stage=doctor' "$TLD_STATE_DIR/install.result"
+  [[ "$output" == *'FAIL injected doctor failure'* ]]
 }
 
 @test "successful install writes the manifest and exact toolkit symlink" {
