@@ -28,27 +28,56 @@ fi
 
 TLD_DOCTOR_RESULT=0
 TLD_DOCTOR_ROOTFS_DIR=''
+TLD_DOCTOR_MANIFEST_FILE=''
+TLD_DOCTOR_ROOTFS_MANIFEST_READY=0
+TLD_DOCTOR_MANIFEST_VALID=0
+TLD_MANIFEST_KEYS=(
+  manifest_version
+  toolkit_version
+  action
+  created_at
+  status
+  architecture
+  rootfs_image
+  rootfs_container
+  profile
+  rootfs_manifest_sha256
+)
 
 tld_doctor_fail() {
   printf 'FAIL %s\n' "$*"
   TLD_DOCTOR_RESULT=1
 }
 
+tld_doctor_valid_created_at() {
+  local value="${1-}"
+  local normalized
+
+  [[ "$value" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || return 1
+  normalized=$(date -u -d "$value" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null) || return 1
+  [[ "$normalized" == "$value" ]]
+}
+
 if ! tld_init_managed_paths; then
   tld_doctor_fail 'managed paths could not be initialized'
 fi
 
-unset action manifest_version toolkit_version status profile rootfs_image rootfs_container
+unset action manifest_version toolkit_version created_at status architecture profile rootfs_image rootfs_container rootfs_manifest_sha256
 if [[ -L "${TLD_INSTANCE_FILE:-}" || ! -f "${TLD_INSTANCE_FILE:-}" ]]; then
   tld_doctor_fail "runtime manifest is missing or is not a regular file: ${TLD_INSTANCE_FILE:-unset}"
-elif tld_read_env_file "$TLD_INSTANCE_FILE" &&
+elif tld_read_env_file "$TLD_INSTANCE_FILE" "${TLD_MANIFEST_KEYS[@]}" &&
   [[ "${manifest_version-}" == 1 &&
     "${toolkit_version-}" == 0.1.0 &&
+    "${action-}" == install &&
     "${status-}" == installed &&
+    "${architecture-}" == aarch64 &&
     "${profile-}" == base &&
     "${rootfs_image-}" == ubuntu:24.04 &&
-    "${rootfs_container-}" == tld-ubuntu ]]; then
-  printf 'PASS runtime manifest status=%s profile=%s\n' "$status" "$profile"
+    "${rootfs_container-}" == tld-ubuntu &&
+    "${rootfs_manifest_sha256-}" =~ ^[0-9A-Fa-f]{64}$ ]] &&
+  tld_doctor_valid_created_at "${created_at-}"; then
+  TLD_DOCTOR_MANIFEST_VALID=1
+  printf 'PASS runtime manifest status=%s action=%s profile=%s\n' "$status" "$action" "$profile"
 else
   tld_doctor_fail 'runtime manifest is missing required installed base values'
 fi
@@ -58,8 +87,9 @@ if _tld_guest_prepare_paths && _tld_guest_load_rootfs_env; then
     if [[ -d "$TLD_DOCTOR_ROOTFS_DIR" && ! -L "$TLD_DOCTOR_ROOTFS_DIR" ]]; then
       printf 'PASS rootfs directory=%s\n' "$TLD_DOCTOR_ROOTFS_DIR"
       if TLD_DOCTOR_MANIFEST_FILE=$(_tld_guest_manifest_path "$TLD_DOCTOR_ROOTFS_DIR") &&
-        [[ ! -L "$TLD_DOCTOR_MANIFEST_FILE" ]]; then
+        [[ ! -L "$TLD_DOCTOR_MANIFEST_FILE" && -r "$TLD_DOCTOR_MANIFEST_FILE" ]]; then
         printf 'PASS rootfs manifest=%s\n' "$TLD_DOCTOR_MANIFEST_FILE"
+        TLD_DOCTOR_ROOTFS_MANIFEST_READY=1
       else
         tld_doctor_fail "rootfs manifest is missing or is a symlink: $TLD_DOCTOR_ROOTFS_DIR"
       fi
@@ -71,6 +101,20 @@ if _tld_guest_prepare_paths && _tld_guest_load_rootfs_env; then
   fi
 else
   tld_doctor_fail 'pinned rootfs environment could not be loaded'
+fi
+
+if (( TLD_DOCTOR_MANIFEST_VALID == 1 && TLD_DOCTOR_ROOTFS_MANIFEST_READY == 1 )); then
+  if actual_digest=$(sha256sum "$TLD_DOCTOR_MANIFEST_FILE"); then
+    if read -r actual_hash _ <<< "$actual_digest" &&
+      [[ "$actual_hash" =~ ^[0-9A-Fa-f]{64}$ &&
+        "${actual_hash,,}" == "${rootfs_manifest_sha256,,}" ]]; then
+      printf 'PASS rootfs manifest SHA-256=%s\n' "$actual_hash"
+    else
+      tld_doctor_fail 'rootfs manifest SHA-256 mismatch'
+    fi
+  else
+    tld_doctor_fail 'rootfs manifest SHA-256 could not be computed'
+  fi
 fi
 
 if [[ -n "$TLD_DOCTOR_ROOTFS_DIR" &&

@@ -130,6 +130,29 @@ setup() {
   [ "$status" -ne 0 ]
 }
 
+@test "tld_read_env_file optional allowlist rejects control variables before assignment" {
+  env_file="$BATS_TEST_TMPDIR/allowlisted.env"
+  unset ALPHA TLD_TEST_MODE
+  printf '%s\n' 'ALPHA=one' 'TLD_TEST_MODE=1' > "$env_file"
+
+  run tld_read_env_file "$env_file" ALPHA
+
+  [ "$status" -ne 0 ]
+  [ -z "${ALPHA+x}" ]
+  [ -z "${TLD_TEST_MODE+x}" ]
+}
+
+@test "tld_read_env_file optional allowlist preserves safe parser behavior" {
+  env_file="$BATS_TEST_TMPDIR/allowlisted-safe.env"
+  unset ALPHA GREETING
+  printf '%s\n' 'ALPHA=one' 'GREETING=hello\ world' > "$env_file"
+
+  tld_read_env_file "$env_file" ALPHA GREETING
+
+  [ "$ALPHA" = one ]
+  [ "$GREETING" = 'hello world' ]
+}
+
 @test "tld_read_env_file propagates readonly assignment failures" {
   env_file="$BATS_TEST_TMPDIR/readonly.env"
   printf '%s\n' 'TLD_READONLY=changed' 'SAFE=ok' > "$env_file"

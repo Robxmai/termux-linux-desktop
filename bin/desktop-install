@@ -89,10 +89,11 @@ tld_install_quarantine_success_marker() {
   timestamp=$(date -u '+%Y%m%dT%H%M%SZ') || return 1
   mkdir -p -- "$backup_parent" || return 1
   backup_dir=$(mktemp -d "$backup_parent/$timestamp.XXXXXXXX") || return 1
-  if mv -- "$TLD_INSTANCE_FILE" "$backup_dir/instance.env"; then
+  move_status=0
+  mv -- "$TLD_INSTANCE_FILE" "$backup_dir/instance.env" || move_status=$?
+  if (( move_status == 0 )); then
     return 0
   fi
-  move_status=$?
   printf 'quarantine move failed for active install marker: %s status=%s\n' "$TLD_INSTANCE_FILE" "$move_status" >&2
 
   if [[ -f "$TLD_INSTANCE_FILE" && ! -L "$TLD_INSTANCE_FILE" ]]; then
@@ -109,15 +110,15 @@ tld_install_quarantine_success_marker() {
   if rm -f -- "$TLD_INSTANCE_FILE"; then
     if [[ -e "$TLD_INSTANCE_FILE" || -L "$TLD_INSTANCE_FILE" ]]; then
       printf 'quarantine active marker removal did not remove path: %s\n' "$TLD_INSTANCE_FILE" >&2
-      return 1
+      return "$move_status"
     fi
     printf 'quarantine removed active install marker after move failure: %s\n' "$TLD_INSTANCE_FILE" >&2
   else
     remove_status=$?
     printf 'quarantine active marker removal failed: %s status=%s\n' "$TLD_INSTANCE_FILE" "$remove_status" >&2
-    return 1
+    return "$remove_status"
   fi
-  return 1
+  return "$move_status"
 }
 
 tld_install_remove_success_manifest() {

@@ -167,8 +167,21 @@ _tld_decode_env_value() {
 
 tld_read_env_file() {
   local file="${1-}"
-  local line key raw
-  local -A parsed=()
+  local line key raw allowed_key
+  local enforce_allowlist=0
+  local -A parsed=() allowed_keys=()
+
+  if (( $# > 1 )); then
+    enforce_allowlist=1
+    shift
+    for allowed_key in "$@"; do
+      if [[ ! "$allowed_key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+        printf 'invalid environment allowlist key: %s\n' "$allowed_key" >&2
+        return 1
+      fi
+      allowed_keys["$allowed_key"]=1
+    done
+  fi
 
   if [[ -z "$file" || ! -f "$file" || ! -r "$file" ]]; then
     printf 'cannot read environment file: %s\n' "$file" >&2
@@ -187,6 +200,10 @@ tld_read_env_file() {
     fi
     key=${BASH_REMATCH[1]}
     raw=${BASH_REMATCH[2]}
+    if (( enforce_allowlist )) && [[ -z ${allowed_keys[$key]+x} ]]; then
+      printf 'unknown environment key: %s\n' "$key" >&2
+      return 1
+    fi
     if ! _tld_decode_env_value "$raw"; then
       printf 'unsafe environment value for %s in: %s\n' "$key" "$file" >&2
       return 1

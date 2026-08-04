@@ -143,6 +143,21 @@ prepare_desktop_test() {
   export TLD_GUEST_LOG_FILE="$TLD_LOG_DIR/guest.log"
 }
 
+write_doctor_manifest() {
+  printf '%s\n' \
+    'manifest_version=1' \
+    'toolkit_version=0.1.0' \
+    'action=install' \
+    'created_at=2026-01-02T03:04:05Z' \
+    'status=installed' \
+    'architecture=aarch64' \
+    'rootfs_image=ubuntu:24.04' \
+    'rootfs_container=tld-ubuntu' \
+    'profile=base' \
+    "rootfs_manifest_sha256=$TLD_TEST_MANIFEST_SHA256" \
+    > "$TLD_INSTANCE_FILE"
+}
+
 make_unowned_install_tree() {
   mkdir -p "$PREFIX/opt/termux-linux-desktop/lib"
   cp -- "$TLD_REPO_ROOT/lib/tld-common.sh" "$PREFIX/opt/termux-linux-desktop/lib/tld-common.sh"
@@ -348,10 +363,11 @@ write_owner_sentinel() {
 
   run bash "$PREFIX/bin/desktop-install"
 
-  [ "$status" -ne 0 ]
+  [ "$status" -eq 73 ]
   [ ! -e "$TLD_INSTANCE_FILE" ]
   [[ "$output" == *'quarantine move failed'* ]]
-  [[ "$output" == *'FAIL install stage=quarantine'* ]]
+  [[ "$output" == *'status=73'* ]]
+  [[ "$output" == *'FAIL install stage=quarantine status=73'* ]]
   grep -Fx 'result=failure' "$TLD_STATE_DIR/install.result"
   grep -Fx 'stage=quarantine' "$TLD_STATE_DIR/install.result"
   backup_manifest=$(compgen -G "$TLD_STATE_DIR/backups/*/instance.env" || true)
@@ -409,6 +425,7 @@ write_owner_sentinel() {
   [ "$status" -eq 0 ]
   [[ "$output" == *'PASS runtime manifest'* ]]
   [[ "$output" == *'PASS guest launcher'* ]]
+  [[ "$output" == *'PASS rootfs manifest SHA-256'* ]]
   [[ "$output" == *'WARN GPU/Wine checks skipped in install mode'* ]]
   [[ "$output" != *'FAIL GPU'* ]]
   [[ "$output" != *'FAIL Wine'* ]]
@@ -427,6 +444,54 @@ write_owner_sentinel() {
 
   [ "$status" -ne 0 ]
   [[ "$output" == *'FAIL guest launcher'* ]]
+}
+
+@test "desktop-doctor rejects an omitted required manifest field" {
+  run_toolkit_install
+  [ "$status" -eq 0 ]
+  prepare_desktop_test
+
+  run bash "$PREFIX/bin/desktop-install"
+  [ "$status" -eq 0 ]
+  write_doctor_manifest
+  sed -i '/^action=/d' "$TLD_INSTANCE_FILE"
+
+  run bash "$PREFIX/bin/desktop-doctor" --install-mode
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'runtime manifest is missing required installed base values'* ]]
+}
+
+@test "desktop-doctor rejects a wrong rootfs manifest hash" {
+  run_toolkit_install
+  [ "$status" -eq 0 ]
+  prepare_desktop_test
+
+  run bash "$PREFIX/bin/desktop-install"
+  [ "$status" -eq 0 ]
+  write_doctor_manifest
+  sed -i 's/^rootfs_manifest_sha256=.*/rootfs_manifest_sha256=0000000000000000000000000000000000000000000000000000000000000000/' "$TLD_INSTANCE_FILE"
+
+  run bash "$PREFIX/bin/desktop-doctor" --install-mode
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'rootfs manifest SHA-256 mismatch'* ]]
+}
+
+@test "desktop-doctor rejects unknown control-variable manifest keys" {
+  run_toolkit_install
+  [ "$status" -eq 0 ]
+  prepare_desktop_test
+
+  run bash "$PREFIX/bin/desktop-install"
+  [ "$status" -eq 0 ]
+  write_doctor_manifest
+  printf '%s\n' 'TLD_TEST_MODE=0' >> "$TLD_INSTANCE_FILE"
+
+  run bash "$PREFIX/bin/desktop-doctor" --install-mode
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'unknown environment key'* ]]
 }
 
 @test "desktop-install removes the success marker when doctor fails" {
