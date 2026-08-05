@@ -1,0 +1,319 @@
+#!/data/data/com.termux/files/usr/bin/bash
+set -Eeuo pipefail
+
+if ! TLD_SCRIPT_PATH=$(readlink -f -- "${BASH_SOURCE[0]}"); then
+  printf '%s\n' 'FAIL cannot resolve desktop doctor path' >&2
+  exit 1
+fi
+TLD_SCRIPT_DIR=${TLD_SCRIPT_PATH%/*}
+TLD_TOOLKIT_ROOT=${TLD_SCRIPT_DIR%/bin}
+
+[[ -n ${PREFIX:-} ]] || {
+  printf '%s\n' 'FAIL PREFIX is unset' >&2
+  exit 1
+}
+[[ -n ${HOME:-} ]] || {
+  printf '%s\n' 'FAIL HOME is unset' >&2
+  exit 1
+}
+
+source "$TLD_TOOLKIT_ROOT/lib/tld-common.sh"
+source "$TLD_TOOLKIT_ROOT/lib/tld-preflight.sh"
+source "$TLD_TOOLKIT_ROOT/lib/tld-manifest.sh"
+source "$TLD_TOOLKIT_ROOT/lib/tld-process.sh"
+source "$TLD_TOOLKIT_ROOT/lib/tld-guest.sh"
+source "$TLD_TOOLKIT_ROOT/lib/tld-host-audio.sh"
+
+TLD_DOCTOR_MODE='full'
+TLD_DOCTOR_JSON=0
+while (( $# > 0 )); do
+  case "${1-}" in
+    --install-mode)
+      TLD_DOCTOR_MODE='install'
+      shift
+      ;;
+    --json)
+      TLD_DOCTOR_JSON=1
+      shift
+      ;;
+    *)
+      printf 'FAIL usage: desktop-doctor [--install-mode] [--json]\n' >&2
+      exit 2
+      ;;
+  esac
+done
+if [[ "$TLD_DOCTOR_MODE" == 'install' && "$TLD_DOCTOR_JSON" == 1 ]]; then
+  printf '%s\n' 'FAIL --install-mode and --json cannot be combined' >&2
+  exit 2
+fi
+
+TLD_DOCTOR_RESULT=0
+
+_tld_doctor_fail() {
+  if (( TLD_DOCTOR_JSON == 1 )); then
+    printf 'FAIL %s\n' "$*" >&2
+  else
+    printf 'FAIL %s\n' "$*"
+  fi
+  TLD_DOCTOR_RESULT=1
+}
+
+_tld_doctor_valid_created_at() {
+  local value="${1-}"
+  local normalized
+
+  [[ "$value" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || return 1
+  normalized=$(date -u -d "$value" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null) || return 1
+  [[ "$normalized" == "$value" ]]
+}
+
+_tld_doctor_manifest_valid() {
+  local -a manifest_keys=(
+    manifest_version
+    toolkit_version
+    action
+    created_at
+    status
+    architecture
+    rootfs_image
+    rootfs_container
+    profile
+    rootfs_manifest_sha256
+  )
+  local actual_hash
+
+  unset action manifest_version toolkit_version created_at status architecture profile rootfs_image rootfs_container rootfs_manifest_sha256
+  if [[ -L "${TLD_INSTANCE_FILE:-}" || ! -f "${TLD_INSTANCE_FILE:-}" ]]; then
+    _tld_doctor_fail "runtime manifest is missing or is not a regular file: ${TLD_INSTANCE_FILE:-unset}"
+    return 1
+  fi
+  if ! tld_read_env_file "$TLD_INSTANCE_FILE" "${manifest_keys[@]}" ||
+    [[ "${manifest_version-}" != 1 ||
+      "${toolkit_version-}" != 0.1.0 ||
+      "${action-}" != install ||
+      "${status-}" != installed ||
+      "${architecture-}" != aarch64 ||
+      "${profile-}" != base ||
+      "${rootfs_image-}" != ubuntu:24.04 ||
+      "${rootfs_container-}" != tld-ubuntu ||
+      ! "${rootfs_manifest_sha256-}" =~ ^[0-9A-Fa-f]{64}$ ]] ||
+    ! _tld_doctor_valid_created_at "${created_at-}"; then
+    _tld_doctor_fail 'runtime manifest is missing required installed base values'
+    return 1
+  fi
+  printf 'PASS runtime manifest status=%s action=%s profile=%s\n' "$status" "$action" "$profile"
+
+  if ! _tld_guest_prepare_paths || ! _tld_guest_load_rootfs_env; then
+    _tld_doctor_fail 'pinned rootfs environment could not be loaded'
+    return 1
+  fi
+  if TLD_DOCTOR_ROOTFS_DIR=$(_tld_guest_rootfs_dir 2>/dev/null) &&
+    TLD_DOCTOR_MANIFEST_FILE=$(_tld_guest_manifest_path "$TLD_DOCTOR_ROOTFS_DIR" 2>/dev/null); then
+    if actual_hash=$(sha256sum "$TLD_DOCTOR_MANIFEST_FILE" | awk '{print $1}') &&
+      [[ "$actual_hash" =~ ^[0-9A-Fa-f]{64}$ &&
+        "${actual_hash,,}" == "${rootfs_manifest_sha256,,}" ]]; then
+      printf 'PASS runtime manifest rootfs SHA-256=%s\n' "$actual_hash"
+      return 0
+    fi
+    _tld_doctor_fail 'runtime manifest rootfs SHA-256 mismatch'
+    return 1
+  fi
+  _tld_doctor_fail 'runtime manifest rootfs path could not be verified'
+  return 1
+}
+
+_tld_doctor_rootfs() {
+  local rootfs_dir manifest_file
+
+  if _tld_guest_prepare_paths && _tld_guest_load_rootfs_env; then
+    if rootfs_dir=$(_tld_guest_rootfs_dir) &&
+      [[ -d "$rootfs_dir" && ! -L "$rootfs_dir" ]] &&
+      manifest_file=$(_tld_guest_manifest_path "$rootfs_dir") &&
+      [[ -f "$manifest_file" && ! -L "$manifest_file" ]]; then
+      printf 'PASS rootfs=%s\n' "$rootfs_dir"
+      return 0
+    fi
+    _tld_doctor_fail 'rootfs is missing or its manifest is absent'
+    return 1
+  fi
+  _tld_doctor_fail 'pinned rootfs environment could not be loaded'
+  return 1
+}
+
+_tld_doctor_guest_launcher() {
+  local rootfs_dir launcher
+
+  rootfs_dir=$(_tld_guest_rootfs_dir 2>/dev/null) || {
+    _tld_doctor_fail 'guest launcher check skipped: rootfs path unavailable'
+    return 1
+  }
+  launcher="$rootfs_dir/usr/local/lib/termux-linux-desktop/start-guest.sh"
+  if [[ -f "$launcher" && ! -L "$launcher" && -x "$launcher" ]]; then
+    printf 'PASS guest launcher=%s\n' "$launcher"
+    return 0
+  fi
+  _tld_doctor_fail "guest launcher is missing or not executable: $launcher"
+  return 1
+}
+
+_tld_doctor_display() {
+  local socket_path="${TLD_X11_SOCKET:-$PREFIX/tmp/.X11-unix/X0}"
+
+  if [[ -S "$socket_path" ]]; then
+    printf 'PASS x11_socket=%s\n' "$socket_path"
+    return 0
+  fi
+  _tld_doctor_fail "Termux:X11 socket is not ready at $socket_path"
+  return 1
+}
+
+_tld_doctor_audio() {
+  if tld_audio_status; then
+    return 0
+  fi
+  _tld_doctor_fail 'audio endpoint is not reachable; run desktop-start to start the toolkit audio path'
+  return 1
+}
+
+_tld_doctor_gpu() {
+  local summary device
+
+  if ! tld_require_command vulkaninfo >/dev/null 2>&1; then
+    printf '%s\n' 'WARN GPU check skipped: vulkaninfo is not installed; the base profile does not require GPU acceleration'
+    return 0
+  fi
+  if summary=$(VK_ICD_FILENAMES="${TLD_VK_ICD:-}" vulkaninfo --summary 2>/dev/null); then
+    device=$(printf '%s\n' "$summary" | sed -n 's/^[[:space:]]*deviceName[[:space:]]*=[[:space:]]*//p' | head -n 1)
+    printf 'PASS gpu=%s\n' "${device:-unknown}"
+    return 0
+  fi
+  printf '%s\n' 'WARN GPU check skipped: vulkaninfo could not enumerate a device; the base profile does not require GPU acceleration'
+  return 0
+}
+
+_tld_doctor_wine() {
+  local wine_version box64_version result=0
+
+  if tld_require_command box64 >/dev/null 2>&1; then
+    box64_version=$(box64 --version 2>/dev/null | head -n 1)
+    printf 'PASS box64=%s\n' "${box64_version:-unknown}"
+  else
+    printf '%s\n' 'WARN box64 is not installed; the base profile does not require Windows compatibility'
+    result=0
+  fi
+  if tld_require_command wine >/dev/null 2>&1; then
+    wine_version=$(wine --version 2>/dev/null | head -n 1)
+    printf 'PASS wine=%s\n' "${wine_version:-unknown}"
+  else
+    printf '%s\n' 'WARN wine is not installed; the base profile does not require Windows compatibility'
+  fi
+  return "$result"
+}
+
+_tld_doctor_processes() {
+  local process_dir="${TLD_STATE_DIR:?TLD_STATE_DIR must be initialized}/processes"
+  local record role count=0 result=0
+
+  if [[ ! -d "$process_dir" ]]; then
+    printf '%s\n' 'PASS owned processes=0'
+    return 0
+  fi
+  for record in "$process_dir"/*.env; do
+    [[ -e "$record" ]] || continue
+    count=$((count + 1))
+    role=${record##*/}
+    role=${role%.env}
+    if tld_process_is_owned "$role" 2>/dev/null; then
+      printf 'PASS owned_process=%s\n' "$role"
+    else
+      printf 'WARN owned_process=%s record is stale or unverifiable\n' "$role"
+    fi
+  done
+  printf 'PASS owned processes=%s\n' "$count"
+  return "$result"
+}
+
+_tld_doctor_json_emit() {
+  local architecture storage_ok display_status audio_status gpu_status rootfs_status process_count profile_status
+  local storage_available
+
+  if ! tld_init_managed_paths; then
+    _tld_doctor_fail 'managed paths could not be initialized'
+  fi
+  architecture=$(uname -m 2>/dev/null || printf 'unknown')
+  storage_ok=$(df -Pk "${TLD_STORAGE_PATH:-$PREFIX}" 2>/dev/null | awk 'NR == 2 { print $4; exit }') || storage_ok=0
+  storage_available="${storage_ok:-0}"
+  [[ "$storage_available" =~ ^[0-9]+$ ]] || storage_available=0
+  if [[ -S "${TLD_X11_SOCKET:-$PREFIX/tmp/.X11-unix/X0}" ]]; then
+    display_status=PASS
+  elif [[ "$TLD_DOCTOR_MODE" == 'install' ]]; then
+    display_status=WARN
+  else
+    display_status=FAIL
+  fi
+  if tld_audio_status >/dev/null 2>&1; then
+    audio_status=PASS
+  else
+    audio_status=WARN
+  fi
+  if _tld_doctor_gpu >/dev/null 2>&1; then
+    gpu_status=PASS
+  else
+    gpu_status=WARN
+  fi
+  if _tld_doctor_rootfs >/dev/null 2>&1; then
+    rootfs_status=PASS
+  else
+    rootfs_status=FAIL
+  fi
+  process_count=$(find "${TLD_STATE_DIR}/processes" -maxdepth 1 -name '*.env' -type f 2>/dev/null | wc -l) || process_count=0
+  if [[ -f "${TLD_INSTANCE_FILE:-}" && ! -L "${TLD_INSTANCE_FILE:-}" ]]; then
+    profile_status=base
+  else
+    profile_status=not-installed
+  fi
+
+  printf '{\n'
+  printf '  "toolkit_version": "0.1.0",\n'
+  printf '  "architecture": "%s",\n' "$architecture"
+  printf '  "storage": { "available_kb": %s },\n' "$storage_available"
+  printf '  "rootfs": { "status": "%s" },\n' "$rootfs_status"
+  printf '  "display": { "status": "%s" },\n' "$display_status"
+  printf '  "audio": { "status": "%s" },\n' "$audio_status"
+  printf '  "gpu": { "status": "%s" },\n' "$gpu_status"
+  printf '  "processes": { "owned": %s },\n' "$process_count"
+  printf '  "profile": "%s"\n' "$profile_status"
+  printf '}\n'
+}
+
+if ! tld_init_managed_paths; then
+  _tld_doctor_fail 'managed paths could not be initialized'
+fi
+
+if [[ "$TLD_DOCTOR_MODE" == 'install' ]]; then
+  if _tld_doctor_manifest_valid; then
+    :
+  fi
+  _tld_doctor_rootfs || true
+  _tld_doctor_guest_launcher || true
+  printf '%s\n' 'WARN GPU/Wine checks skipped in install mode; neither is required by the base profile'
+elif (( TLD_DOCTOR_JSON == 1 )); then
+  _tld_doctor_json_emit
+else
+  if ! tld_check_architecture; then
+    TLD_DOCTOR_RESULT=1
+  fi
+  if ! tld_check_storage 8589934592 12884901888; then
+    TLD_DOCTOR_RESULT=1
+  fi
+  _tld_doctor_manifest_valid || true
+  _tld_doctor_rootfs || true
+  _tld_doctor_guest_launcher || true
+  _tld_doctor_display || true
+  _tld_doctor_audio || true
+  _tld_doctor_gpu || true
+  _tld_doctor_wine || true
+  _tld_doctor_processes || true
+fi
+
+exit "$TLD_DOCTOR_RESULT"

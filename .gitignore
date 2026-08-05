@@ -6,3 +6,13 @@ coverage/
 test-output/
 dist/
 release/
+*.log
+*.tar
+*.tar.*
+*.rootfs
+.cache/
+acceptance/
+.env.local
+.env.*.local
+*.pem
+*.key

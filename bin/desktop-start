@@ -1,0 +1,215 @@
+#!/data/data/com.termux/files/usr/bin/bash
+set -Eeuo pipefail
+
+if ! TLD_SCRIPT_PATH=$(readlink -f -- "${BASH_SOURCE[0]}"); then
+  printf '%s\n' 'FAIL cannot resolve desktop start path' >&2
+  exit 1
+fi
+TLD_SCRIPT_DIR=${TLD_SCRIPT_PATH%/*}
+TLD_TOOLKIT_ROOT=${TLD_SCRIPT_DIR%/bin}
+
+[[ -n ${PREFIX:-} ]] || {
+  printf '%s\n' 'FAIL PREFIX is unset' >&2
+  exit 1
+}
+[[ -n ${HOME:-} ]] || {
+  printf '%s\n' 'FAIL HOME is unset' >&2
+  exit 1
+}
+
+source "$TLD_TOOLKIT_ROOT/lib/tld-common.sh"
+source "$TLD_TOOLKIT_ROOT/lib/tld-preflight.sh"
+source "$TLD_TOOLKIT_ROOT/lib/tld-manifest.sh"
+source "$TLD_TOOLKIT_ROOT/lib/tld-guest.sh"
+source "$TLD_TOOLKIT_ROOT/lib/tld-host-audio.sh"
+
+TLD_START_RESULT_FILE=''
+TLD_START_INSTANCE_ID=''
+
+_tld_start_load_base_profile() {
+  local profile_file="${TLD_TOOLKIT_ROOT}/profiles/base.env"
+  local -a profile_keys=(
+    PROFILE_NAME
+    PROFILE_VERSION
+    DISPLAY_DEFAULT
+    PULSE_SERVER_DEFAULT
+    GUEST_CONTAINER
+    GUEST_USER
+    REQUIRES_GPU
+    REQUIRES_WINE
+  )
+
+  unset PROFILE_NAME PROFILE_VERSION DISPLAY_DEFAULT PULSE_SERVER_DEFAULT GUEST_CONTAINER GUEST_USER REQUIRES_GPU REQUIRES_WINE
+  if [[ -f "$profile_file" && ! -L "$profile_file" ]] &&
+    tld_read_env_file "$profile_file" "${profile_keys[@]}" &&
+    [[ "${PROFILE_NAME-}" == base &&
+      "${PROFILE_VERSION-}" == 1 &&
+      "${DISPLAY_DEFAULT-}" == :0 &&
+      "${PULSE_SERVER_DEFAULT-}" == tcp:127.0.0.1:4713 &&
+      "${GUEST_CONTAINER-}" == tld-ubuntu &&
+      "${GUEST_USER-}" == tld &&
+      "${REQUIRES_GPU-}" == false &&
+      "${REQUIRES_WINE-}" == false ]]; then
+    TLD_DISPLAY="${DISPLAY_DEFAULT}"
+    TLD_PULSE_SERVER="${PULSE_SERVER_DEFAULT}"
+    TLD_GUEST_CONTAINER="${GUEST_CONTAINER}"
+    TLD_GUEST_USER="${GUEST_USER}"
+    return 0
+  fi
+  printf '%s\n' 'FAIL base profile could not be loaded or validated' >&2
+  return 1
+}
+
+_tld_start_write_result() {
+  local state="$1"
+  local message="$2"
+  local result=0
+
+  if [[ -n ${TLD_START_RESULT_FILE:-} ]]; then
+    if tld_manifest_begin start &&
+      tld_manifest_set result "$state" &&
+      tld_manifest_set message "$message" &&
+      tld_manifest_set instance_id "${TLD_START_INSTANCE_ID:-}" &&
+      tld_manifest_commit "$TLD_START_RESULT_FILE"; then
+      :
+    else
+      result=1
+    fi
+  fi
+  tld_log "start result=$state message=$message" || true
+  return "$result"
+}
+
+_tld_start_fail() {
+  local message="$1"
+  local result="${2:-1}"
+
+  _tld_start_write_result failure "$message" || true
+  printf 'FAIL start: %s\n' "$message" >&2
+  return "$result"
+}
+
+_tld_start_guest_session_alive() {
+  tld_process_is_owned desktop 2>/dev/null
+}
+
+_tld_start_launch_guest() {
+  local pid command_hash attempts=0
+
+  if ! proot-distro login "$TLD_GUEST_CONTAINER" --user "$TLD_GUEST_USER" --shared-tmp --shared-x11 --detach -- \
+    /usr/local/lib/termux-linux-desktop/start-guest.sh >> "$TLD_LOG_DIR/guest.log" 2>&1; then
+    return 1
+  fi
+  while (( attempts < 20 )); do
+    pid=$(pgrep -f 'start-guest\.sh' | head -n 1) || true
+    if [[ "$pid" =~ ^[1-9][0-9]*$ ]]; then
+      break
+    fi
+    attempts=$((attempts + 1))
+    sleep 0.5
+  done
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+  command_hash=''
+  attempts=0
+  while (( attempts < 20 )); do
+    if command_hash=$(tr '\0' '\n' < "${TLD_PROC_ROOT:-/proc}/$pid/cmdline" 2>/dev/null | sha256sum | awk '{print $1}') &&
+      [[ "$command_hash" != 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855' ]]; then
+      break
+    fi
+    command_hash=''
+    attempts=$((attempts + 1))
+    sleep 0.1
+  done
+  if [[ -z "$command_hash" ]]; then
+    return 1
+  fi
+  if ! tld_process_record desktop "$pid" "$command_hash"; then
+    return 1
+  fi
+  TLD_START_GUEST_PID="$pid"
+}
+
+_tld_start_wait_for_xfce() {
+  local pid="${TLD_START_GUEST_PID:-}"
+  local attempts=0
+  local component
+
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+  while (( attempts < 30 )); do
+    for component in xfce4-session xfwm4 xfdesktop xfce4-panel; do
+      if pgrep -x "$component" >/dev/null 2>&1; then
+        return 0
+      fi
+    done
+    attempts=$((attempts + 1))
+    sleep 1
+  done
+  return 1
+}
+
+_tld_start_main() {
+  local result
+  local socket_path
+
+  if ! tld_init_managed_paths; then
+    printf '%s\n' 'FAIL cannot initialize managed toolkit paths' >&2
+    return 1
+  fi
+  TLD_START_RESULT_FILE="$TLD_STATE_DIR/start.result"
+  TLD_START_INSTANCE_ID="$(date -u '+%Y%m%dT%H%M%SZ')"
+
+  if [[ ! -e "${TLD_INSTANCE_FILE:-}" || -L "${TLD_INSTANCE_FILE:-}" || ! -f "${TLD_INSTANCE_FILE:-}" ]]; then
+    _tld_start_fail 'toolkit is not installed; run desktop-install first'
+    return 1
+  fi
+
+  if ! _tld_start_load_base_profile; then
+    _tld_start_fail 'base profile could not be loaded'
+    return 1
+  fi
+
+  if [[ "${TLD_TEST_MODE:-0}" != 1 ]]; then
+    TLD_X11_SOCKET="$PREFIX/tmp/.X11-unix/X0"
+  fi
+  TLD_X11_MODE=start
+  if ! tld_check_x11_socket; then
+    _tld_start_fail "Termux:X11 socket is not ready at ${TLD_X11_SOCKET:-unset}; start the Android Termux:X11 app"
+    return 1
+  fi
+
+  if ! tld_audio_start; then
+    _tld_start_fail 'audio endpoint could not be started'
+    return 1
+  fi
+
+  if _tld_start_guest_session_alive; then
+    TLD_START_GUEST_PID="$(sed -n 's/^PID=//p' "$TLD_STATE_DIR/processes/desktop.env" | tail -n 1)"
+    printf '%s\n' 'PASS start guest session reused (owned instance already running)'
+  else
+    if ! _tld_start_launch_guest; then
+      tld_audio_stop_if_owned || true
+      _tld_start_fail 'PRoot desktop session could not be started'
+      return 1
+    fi
+    printf 'PASS start guest session launched pid=%s\n' "$TLD_START_GUEST_PID"
+  fi
+
+  if _tld_start_wait_for_xfce; then
+    _tld_start_write_result success 'XFCE desktop session is running'
+    printf '%s\n' 'PASS start XFCE components detected'
+    return 0
+  fi
+
+  tld_process_stop desktop 2>/dev/null || true
+  tld_audio_stop_if_owned || true
+  _tld_start_fail 'XFCE components were not detected within 30 seconds'
+  return 1
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  if _tld_start_main; then
+    exit 0
+  else
+    exit $?
+  fi
+fi

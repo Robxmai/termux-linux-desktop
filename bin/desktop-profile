@@ -1,0 +1,137 @@
+#!/data/data/com.termux/files/usr/bin/bash
+set -Eeuo pipefail
+
+if ! TLD_SCRIPT_PATH=$(readlink -f -- "${BASH_SOURCE[0]}"); then
+  printf '%s\n' 'FAIL cannot resolve desktop profile path' >&2
+  exit 1
+fi
+TLD_SCRIPT_DIR=${TLD_SCRIPT_PATH%/*}
+TLD_TOOLKIT_ROOT=${TLD_SCRIPT_DIR%/bin}
+
+[[ -n ${PREFIX:-} ]] || {
+  printf '%s\n' 'FAIL PREFIX is unset' >&2
+  exit 1
+}
+[[ -n ${HOME:-} ]] || {
+  printf '%s\n' 'FAIL HOME is unset' >&2
+  exit 1
+}
+
+source "$TLD_TOOLKIT_ROOT/lib/tld-common.sh"
+source "$TLD_TOOLKIT_ROOT/lib/tld-manifest.sh"
+
+TLD_PROFILE_ACTION="${1-}"
+TLD_PROFILE_NAME="${2-}"
+
+_tld_profile_fail() {
+  printf 'FAIL profile: %s\n' "$*" >&2
+  return 1
+}
+
+_tld_profile_active() {
+  local profile=not-installed
+
+  if [[ -f "${TLD_INSTANCE_FILE:-}" && ! -L "${TLD_INSTANCE_FILE:-}" ]]; then
+    profile=$(sed -n 's/^profile=//p' "$TLD_INSTANCE_FILE" | tail -n 1)
+    [[ -n "$profile" ]] || profile=not-installed
+  fi
+  printf '%s\n' "$profile"
+}
+
+_tld_profile_list() {
+  local profile_file name
+
+  for profile_file in "$TLD_TOOLKIT_ROOT"/profiles/*.env; do
+    [[ -e "$profile_file" && ! -L "$profile_file" ]] || continue
+    name=${profile_file##*/}
+    name=${name%.env}
+    tld_validate_name "$name" || continue
+    printf '%s\n' "$name"
+  done
+  printf 'active: %s\n' "$(_tld_profile_active)"
+}
+
+_tld_profile_apply() {
+  local profile_file profile active
+  local -a profile_keys=(
+    PROFILE_NAME
+    PROFILE_VERSION
+    DISPLAY_DEFAULT
+    PULSE_SERVER_DEFAULT
+    GUEST_CONTAINER
+    GUEST_USER
+    REQUIRES_GPU
+    REQUIRES_WINE
+  )
+
+  if ! tld_validate_name "$TLD_PROFILE_NAME"; then
+    _tld_profile_fail "invalid profile name: $TLD_PROFILE_NAME"
+    return 1
+  fi
+  profile_file="$TLD_TOOLKIT_ROOT/profiles/$TLD_PROFILE_NAME.env"
+  if [[ ! -f "$profile_file" || -L "$profile_file" ]]; then
+    _tld_profile_fail "unknown profile: $TLD_PROFILE_NAME"
+    return 1
+  fi
+  if [[ -L "${TLD_INSTANCE_FILE:-}" || ! -f "${TLD_INSTANCE_FILE:-}" ]]; then
+    _tld_profile_fail 'toolkit is not installed; run desktop-install first'
+    return 1
+  fi
+  unset PROFILE_NAME PROFILE_VERSION DISPLAY_DEFAULT PULSE_SERVER_DEFAULT GUEST_CONTAINER GUEST_USER REQUIRES_GPU REQUIRES_WINE
+  if ! tld_read_env_file "$profile_file" "${profile_keys[@]}" ||
+    [[ "${PROFILE_NAME-}" != "$TLD_PROFILE_NAME" ]]; then
+    _tld_profile_fail "profile could not be validated: $TLD_PROFILE_NAME"
+    return 1
+  fi
+
+  active=$(_tld_profile_active)
+  if [[ "$active" == "$TLD_PROFILE_NAME" ]]; then
+    printf 'PASS profile=%s already active\n' "$TLD_PROFILE_NAME"
+    return 0
+  fi
+  if ! tld_manifest_begin profile-apply ||
+    ! tld_manifest_set profile "$TLD_PROFILE_NAME" ||
+    ! tld_manifest_set profile_before "$active" ||
+    ! tld_manifest_commit "$TLD_STATE_DIR/profile.env"; then
+    _tld_profile_fail "profile state could not be written: $TLD_PROFILE_NAME"
+    return 1
+  fi
+  printf 'PASS profile=%s applied (was %s)\n' "$TLD_PROFILE_NAME" "$active"
+}
+
+_tld_profile_remove() {
+  if [[ "$TLD_PROFILE_NAME" != 'base' ]]; then
+    _tld_profile_fail "unknown removable profile: $TLD_PROFILE_NAME"
+    return 1
+  fi
+  _tld_profile_fail 'profile=base is required by the toolkit and cannot be removed'
+  return 1
+}
+
+if ! tld_init_managed_paths; then
+  printf '%s\n' 'FAIL profile: managed paths could not be initialized' >&2
+  exit 1
+fi
+
+case "$TLD_PROFILE_ACTION" in
+  list)
+    _tld_profile_list
+    exit 0
+    ;;
+  apply)
+    if ! _tld_profile_apply; then
+      exit 1
+    fi
+    exit 0
+    ;;
+  remove)
+    if ! _tld_profile_remove; then
+      exit 1
+    fi
+    exit 0
+    ;;
+  *)
+    printf '%s\n' 'FAIL usage: desktop-profile list|apply <name>|remove <name>' >&2
+    exit 2
+    ;;
+esac

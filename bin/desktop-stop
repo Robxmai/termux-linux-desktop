@@ -1,0 +1,125 @@
+#!/data/data/com.termux/files/usr/bin/bash
+set -Eeuo pipefail
+
+if ! TLD_SCRIPT_PATH=$(readlink -f -- "${BASH_SOURCE[0]}"); then
+  printf '%s\n' 'FAIL cannot resolve desktop stop path' >&2
+  exit 1
+fi
+TLD_SCRIPT_DIR=${TLD_SCRIPT_PATH%/*}
+TLD_TOOLKIT_ROOT=${TLD_SCRIPT_DIR%/bin}
+
+[[ -n ${PREFIX:-} ]] || {
+  printf '%s\n' 'FAIL PREFIX is unset' >&2
+  exit 1
+}
+[[ -n ${HOME:-} ]] || {
+  printf '%s\n' 'FAIL HOME is unset' >&2
+  exit 1
+}
+
+source "$TLD_TOOLKIT_ROOT/lib/tld-common.sh"
+source "$TLD_TOOLKIT_ROOT/lib/tld-manifest.sh"
+source "$TLD_TOOLKIT_ROOT/lib/tld-process.sh"
+source "$TLD_TOOLKIT_ROOT/lib/tld-host-audio.sh"
+
+TLD_STOP_RESULT_FILE=''
+
+_tld_stop_write_result() {
+  local state="$1"
+  local remaining="$2"
+  local message="$3"
+  local result=0
+
+  if [[ -n ${TLD_STOP_RESULT_FILE:-} ]]; then
+    if tld_manifest_begin stop &&
+      tld_manifest_set result "$state" &&
+      tld_manifest_set remaining_owned "$remaining" &&
+      tld_manifest_set message "$message" &&
+      tld_manifest_commit "$TLD_STOP_RESULT_FILE"; then
+      :
+    else
+      result=1
+    fi
+  fi
+  tld_log "stop result=$state remaining_owned=$remaining message=$message" || true
+  return "$result"
+}
+
+_tld_stop_desktop() {
+  local record_file pid attempts=0
+
+  record_file="$TLD_STATE_DIR/processes/desktop.env"
+  if [[ ! -f "$record_file" || -L "$record_file" ]]; then
+    return 0
+  fi
+  if ! tld_process_is_owned desktop; then
+    rm -f -- "$record_file" || true
+    return 0
+  fi
+  pid=$(sed -n 's/^PID=//p' "$record_file" | tail -n 1)
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+
+  if command -v proot-distro >/dev/null 2>&1; then
+    if ! proot-distro kill "$pid"; then
+      if tld_process_stop desktop; then
+        rm -f -- "$record_file" || true
+        return 0
+      fi
+      return 1
+    fi
+  else
+    if ! tld_process_stop desktop; then
+      return 1
+    fi
+  fi
+
+  while (( attempts < 100 )); do
+    if [[ ! -e "${TLD_PROC_ROOT:-/proc}/$pid" ]]; then
+      rm -f -- "$record_file" || true
+      return 0
+    fi
+    attempts=$((attempts + 1))
+    sleep 0.1
+  done
+  return 1
+}
+
+_tld_stop_main() {
+  local result=0
+  local remaining=0
+
+  if ! tld_init_managed_paths; then
+    printf '%s\n' 'FAIL cannot initialize managed toolkit paths' >&2
+    return 1
+  fi
+  TLD_STOP_RESULT_FILE="$TLD_STATE_DIR/stop.result"
+
+  if ! _tld_stop_desktop; then
+    result=1
+  fi
+  if ! tld_audio_stop_if_owned; then
+    result=1
+  fi
+
+  if [[ -d "$TLD_STATE_DIR/processes" ]]; then
+    remaining=$(find "$TLD_STATE_DIR/processes" -maxdepth 1 -name '*.env' -type f | wc -l)
+  fi
+
+  if (( result == 0 && remaining == 0 )); then
+    _tld_stop_write_result success 0 'owned desktop and audio processes stopped'
+    printf '%s\n' 'PASS stop all owned processes stopped'
+    return 0
+  fi
+
+  _tld_stop_write_result failure "$remaining" 'one or more owned processes could not be verified stopped'
+  printf 'FAIL stop remaining_owned=%s\n' "$remaining" >&2
+  return 1
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  if _tld_stop_main; then
+    exit 0
+  else
+    exit $?
+  fi
+fi
