@@ -82,7 +82,18 @@ setup() {
     '#!/usr/bin/env bash' \
     'set -Eeuo pipefail' \
     'printf "proot-distro %s\\n" "$*" >> "${TLD_TEST_CALL_LOG:?}"' \
-    ': > "${TLD_TEST_ROOT:?}/guest-started"' \
+    'case "${1-}" in' \
+    '  login)' \
+    '    : > "${TLD_TEST_ROOT:?}/guest-started"' \
+    '    ;;' \
+    '  kill)' \
+    '    if [[ "${TLD_TEST_KILL_REMOVES:-0}" == 1 ]]; then' \
+    '      rm -rf -- "${TLD_PROC_ROOT:?}/${2:?}"' \
+    '      rm -f -- "${TLD_TEST_ROOT:?}/guest-started" "${TLD_TEST_ROOT:?}/xfce-ready"' \
+    '    fi' \
+    '    exit "${TLD_TEST_PROOT_KILL_STATUS:-0}"' \
+    '    ;;' \
+    'esac' \
     'exit 0' \
     > "$TLD_TEST_BIN/proot-distro"
 
@@ -257,7 +268,7 @@ PY
 
   [ "$status" -eq 0 ]
   [[ "$output" == *"PASS stop"* ]]
-  grep -q '^kill -TERM ' "$TLD_TEST_CALL_LOG"
+  grep -q '^proot-distro kill 5252$' "$TLD_TEST_CALL_LOG"
   [ ! -f "$TLD_STATE_DIR/processes/desktop.env" ]
   grep -q '^result=success$' "$TLD_STATE_DIR/stop.result"
   grep -q '^remaining_owned=0$' "$TLD_STATE_DIR/stop.result"
@@ -281,7 +292,7 @@ PY
   printf 'AUDIO_OWNER=external\n' > "$TLD_STATE_DIR/audio-owner.env"
   _tld_make_proc_entry "$TLD_TEST_GUEST_PID" "$TLD_TEST_GUEST_TICKS" start-guest.sh
   _tld_record_desktop
-  export TLD_TEST_KILL_FAILS=1
+  export TLD_TEST_PROOT_KILL_STATUS=1
 
   run bash "$BATS_TEST_DIRNAME/../bin/desktop-stop"
 

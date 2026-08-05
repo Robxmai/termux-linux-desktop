@@ -45,6 +45,45 @@ _tld_stop_write_result() {
   return "$result"
 }
 
+_tld_stop_desktop() {
+  local record_file pid attempts=0
+
+  record_file="$TLD_STATE_DIR/processes/desktop.env"
+  if [[ ! -f "$record_file" || -L "$record_file" ]]; then
+    return 0
+  fi
+  if ! tld_process_is_owned desktop; then
+    rm -f -- "$record_file" || true
+    return 0
+  fi
+  pid=$(sed -n 's/^PID=//p' "$record_file" | tail -n 1)
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+
+  if command -v proot-distro >/dev/null 2>&1; then
+    if ! proot-distro kill "$pid"; then
+      if tld_process_stop desktop; then
+        rm -f -- "$record_file" || true
+        return 0
+      fi
+      return 1
+    fi
+  else
+    if ! tld_process_stop desktop; then
+      return 1
+    fi
+  fi
+
+  while (( attempts < 100 )); do
+    if [[ ! -e "${TLD_PROC_ROOT:-/proc}/$pid" ]]; then
+      rm -f -- "$record_file" || true
+      return 0
+    fi
+    attempts=$((attempts + 1))
+    sleep 0.1
+  done
+  return 1
+}
+
 _tld_stop_main() {
   local result=0
   local remaining=0
@@ -55,10 +94,8 @@ _tld_stop_main() {
   fi
   TLD_STOP_RESULT_FILE="$TLD_STATE_DIR/stop.result"
 
-  if [[ -f "$TLD_STATE_DIR/processes/desktop.env" && ! -L "$TLD_STATE_DIR/processes/desktop.env" ]]; then
-    if ! tld_process_stop desktop; then
-      result=1
-    fi
+  if ! _tld_stop_desktop; then
+    result=1
   fi
   if ! tld_audio_stop_if_owned; then
     result=1
