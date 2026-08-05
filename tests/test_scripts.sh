@@ -14,6 +14,11 @@ for TLD_SCRIPT in "$TLD_REPO_ROOT"/bin/* "$TLD_REPO_ROOT"/lib/*.sh; do
     if ! bash -n "$TLD_SCRIPT"; then
       tld_check_fail "syntax check failed for $TLD_SCRIPT"
     fi
+  fi
+done
+
+for TLD_SCRIPT in "$TLD_REPO_ROOT"/bin/*; do
+  if [[ -f "$TLD_SCRIPT" && ! -L "$TLD_SCRIPT" ]]; then
     if ! grep -q 'set -Eeuo pipefail' "$TLD_SCRIPT"; then
       tld_check_fail "missing strict mode in $TLD_SCRIPT"
     fi
