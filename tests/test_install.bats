@@ -58,7 +58,8 @@ setup() {
     'printf "\\n" >> "${TLD_TEST_CALL_LOG:?}"' \
     'case "${1-}" in' \
     '  --version)' \
-    '    printf "%s\\n" "${TLD_TEST_PROOT_VERSION:?}"' \
+    '    printf "%s\\n" "PRoot-Distro version '\''${TLD_TEST_PROOT_VERSION:?}'\'' by Termux (@sylirre)."' \
+    '    exit 1' \
     '    ;;' \
     '  install)' \
     '    mkdir -p "${TLD_TEST_ROOTFS_DIR:?}"' \

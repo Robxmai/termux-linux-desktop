@@ -205,17 +205,14 @@ _tld_guest_require_proot_version() {
   local version_output actual_major actual_minor actual_patch
   local floor_major floor_minor floor_patch actual_version
 
-  if ! version_output=$(proot-distro --version 2>/dev/null); then
-    _tld_guest_error 'cannot determine proot-distro version'
-    return 1
-  fi
-  if [[ "$version_output" =~ ([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
+  version_output=$(proot-distro --version 2>&1) || true
+  if [[ "$version_output" =~ PRoot-Distro[[:space:]]+version[[:space:]]+\'([0-9]+)\.([0-9]+)\.([0-9]+)\' ]]; then
     actual_major=$((10#${BASH_REMATCH[1]}))
     actual_minor=$((10#${BASH_REMATCH[2]}))
     actual_patch=$((10#${BASH_REMATCH[3]}))
     actual_version="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
   else
-    _tld_guest_error "unparseable proot-distro version: $version_output"
+    _tld_guest_error "unparseable proot-distro version output"
     return 1
   fi
   if [[ "$TLD_ROOTFS_MIN_PROOT_DISTRO" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then

@@ -38,8 +38,8 @@ setup() {
     '{ printf "proot-distro"; printf " %s" "$@"; printf "\n"; } >> "$TLD_TEST_CALL_LOG"' \
     'case "${1-}" in' \
     '  --version)' \
-    '    printf "%s\n" "${TLD_TEST_PROOT_VERSION:?}"' \
-    '    exit 0' \
+    '    printf "%s\n" "PRoot-Distro version '\''${TLD_TEST_PROOT_VERSION:?}'\'' by Termux (@sylirre)."' \
+    '    exit 1' \
     '    ;;' \
     '  install)' \
     '    if [[ -n "${TLD_TEST_LOCK_HELD:-}" && -e "$TLD_TEST_LOCK_HELD" ]]; then' \
