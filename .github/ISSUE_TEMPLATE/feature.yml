@@ -1,0 +1,26 @@
+name: Feature request
+description: Propose a change to the base toolkit or an experimental profile.
+title: "[Feature] "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the user-facing need, not the implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: What should the toolkit do differently?
+    validations:
+      required: true
+  - type: checkboxes
+    id: placement
+    attributes:
+      label: Placement
+      options:
+        - label: Base toolkit (install, lifecycle, diagnostics, docs)
+        - label: Experimental profile (GPU, Wine, Steam, games)

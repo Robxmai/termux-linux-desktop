@@ -1,0 +1,60 @@
+name: Bug report
+description: Report a problem with the base desktop or an experimental profile.
+title: "[Bug] "
+labels: [bug]
+body:
+  - type: input
+    id: toolkit-version
+    attributes:
+      label: Toolkit version
+      description: Output of `desktop-status` or the release tag used.
+      placeholder: "v0.1.0"
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Device
+      description: Model name, Android version, Termux source (F-Droid or GitHub), architecture.
+      placeholder: "Xiaomi Pad 6S Pro, Android 16, Termux GitHub build, aarch64"
+    validations:
+      required: true
+  - type: input
+    id: profile
+    attributes:
+      label: Profile
+      description: base, gpu, wine, steam, or fh6-experimental.
+      placeholder: "base"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The exact command(s) that failed.
+      placeholder: |
+        1. desktop-install
+        2. desktop-start
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Doctor output
+      description: Paste `desktop-doctor --json` output. Sanitize any account or network details.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected vs actual
+      description: What should happen and what actually happened.
+    validations:
+      required: true
+  - type: checkboxes
+    id: base-repro
+    attributes:
+      label: Base profile
+      options:
+        - label: The issue also reproduces on the base profile
