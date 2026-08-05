@@ -1,0 +1,144 @@
+#!/data/data/com.termux/files/usr/bin/bash
+set -Eeuo pipefail
+
+if ! TLD_SCRIPT_PATH=$(readlink -f -- "${BASH_SOURCE[0]}"); then
+  printf '%s\n' 'FAIL cannot resolve desktop status path' >&2
+  exit 1
+fi
+TLD_SCRIPT_DIR=${TLD_SCRIPT_PATH%/*}
+TLD_TOOLKIT_ROOT=${TLD_SCRIPT_DIR%/bin}
+
+[[ -n ${PREFIX:-} ]] || {
+  printf '%s\n' 'FAIL PREFIX is unset' >&2
+  exit 1
+}
+[[ -n ${HOME:-} ]] || {
+  printf '%s\n' 'FAIL HOME is unset' >&2
+  exit 1
+}
+
+source "$TLD_TOOLKIT_ROOT/lib/tld-common.sh"
+source "$TLD_TOOLKIT_ROOT/lib/tld-manifest.sh"
+source "$TLD_TOOLKIT_ROOT/lib/tld-process.sh"
+source "$TLD_TOOLKIT_ROOT/lib/tld-guest.sh"
+source "$TLD_TOOLKIT_ROOT/lib/tld-host-audio.sh"
+
+_tld_status_rootfs() {
+  local rootfs_dir manifest_file
+
+  if _tld_guest_prepare_paths && _tld_guest_load_rootfs_env; then
+    if rootfs_dir=$(_tld_guest_rootfs_dir) &&
+      [[ -d "$rootfs_dir" && ! -L "$rootfs_dir" ]] &&
+      manifest_file=$(_tld_guest_manifest_path "$rootfs_dir") &&
+      [[ -f "$manifest_file" && ! -L "$manifest_file" ]]; then
+      printf '%s\n' 'PASS'
+      return 0
+    fi
+  fi
+  printf '%s\n' 'FAIL'
+  return 1
+}
+
+_tld_status_display() {
+  local socket_path="${TLD_X11_SOCKET:-$PREFIX/tmp/.X11-unix/X0}"
+  local mode="${TLD_X11_MODE:-start}"
+
+  if [[ -S "$socket_path" ]]; then
+    printf '%s\n' 'PASS'
+    return 0
+  fi
+  if [[ "$mode" == 'install' ]]; then
+    printf '%s\n' 'WARN'
+    return 0
+  fi
+  printf '%s\n' 'FAIL'
+  return 1
+}
+
+_tld_status_guest() {
+  if tld_process_is_owned desktop 2>/dev/null; then
+    printf '%s\n' 'PASS'
+    return 0
+  fi
+  printf '%s\n' 'STOPPED'
+  return 1
+}
+
+_tld_status_owned_count() {
+  local process_dir="${TLD_STATE_DIR:?TLD_STATE_DIR must be initialized}/processes"
+  local count=0
+
+  if [[ -d "$process_dir" ]]; then
+    count=$(find "$process_dir" -maxdepth 1 -name '*.env' -type f | wc -l)
+  fi
+  printf '%s\n' "$count"
+}
+
+_tld_status_main() {
+  local instance_id rootfs_status display_status audio_status guest_status owned_count
+  local result=0
+
+  if ! tld_init_managed_paths; then
+    printf '%s\n' 'FAIL cannot initialize managed toolkit paths' >&2
+    return 1
+  fi
+  TLD_STATUS_INSTALLED=0
+  if [[ -f "${TLD_INSTANCE_FILE:-}" && ! -L "${TLD_INSTANCE_FILE:-}" ]]; then
+    TLD_STATUS_INSTALLED=1
+  fi
+
+  if (( TLD_STATUS_INSTALLED == 1 )); then
+    instance_id=$(sed -n 's/^created_at=//p' "$TLD_INSTANCE_FILE" | tail -n 1)
+  else
+    instance_id='not-installed'
+  fi
+
+  printf 'Toolkit: %s\n' '0.1.0'
+  printf 'Instance: %s\n' "$instance_id"
+  if _tld_status_rootfs; then
+    rootfs_status=PASS
+  else
+    rootfs_status=FAIL
+    result=1
+  fi
+  if _tld_status_display; then
+    display_status=PASS
+  else
+    display_status=FAIL
+    result=1
+  fi
+  if tld_audio_status; then
+    audio_status=PASS
+  else
+    audio_status=WARN
+    result=1
+  fi
+  if _tld_status_guest; then
+    guest_status=PASS
+  else
+    guest_status=STOPPED
+    result=1
+  fi
+  owned_count=$(_tld_status_owned_count)
+
+  printf 'Rootfs: %s\n' "$rootfs_status"
+  printf 'Display: %s\n' "$display_status"
+  printf 'Audio: %s\n' "$audio_status"
+  printf 'Guest: %s\n' "$guest_status"
+  printf 'Owned processes: %s\n' "$owned_count"
+  printf 'Profile: %s\n' 'base'
+
+  if (( TLD_STATUS_INSTALLED == 0 )); then
+    printf '%s\n' 'FAIL toolkit is not installed; run desktop-install first' >&2
+    return 1
+  fi
+  return "$result"
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  if _tld_status_main; then
+    exit 0
+  else
+    exit $?
+  fi
+fi
