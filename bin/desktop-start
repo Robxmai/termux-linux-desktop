@@ -112,8 +112,8 @@ _tld_start_launch_guest() {
   command_hash=''
   attempts=0
   while (( attempts < 20 )); do
-    if [[ -s "${TLD_PROC_ROOT:-/proc}/$pid/cmdline" ]] &&
-      command_hash=$(tr '\0' '\n' < "${TLD_PROC_ROOT:-/proc}/$pid/cmdline" 2>/dev/null | sha256sum | awk '{print $1}'); then
+    if command_hash=$(tr '\0' '\n' < "${TLD_PROC_ROOT:-/proc}/$pid/cmdline" 2>/dev/null | sha256sum | awk '{print $1}') &&
+      [[ "$command_hash" != 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855' ]]; then
       break
     fi
     command_hash=''
