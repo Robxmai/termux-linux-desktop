@@ -263,6 +263,18 @@ PY
   grep -q '^remaining_owned=0$' "$TLD_STATE_DIR/stop.result"
 }
 
+@test "stop succeeds when nothing is owned" {
+  printf 'manifest=1\n' > "$TLD_INSTANCE_FILE"
+  : > "$TLD_TEST_ROOT/audio-ready"
+
+  run bash "$BATS_TEST_DIRNAME/../bin/desktop-stop"
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"PASS stop"* ]]
+  grep -q '^result=success$' "$TLD_STATE_DIR/stop.result"
+  grep -q '^remaining_owned=0$' "$TLD_STATE_DIR/stop.result"
+}
+
 @test "stop returns nonzero when an owned process cannot be verified stopped" {
   printf 'manifest=1\n' > "$TLD_INSTANCE_FILE"
   : > "$TLD_TEST_ROOT/audio-ready"

@@ -41,6 +41,9 @@ setup() {
     '#!/usr/bin/env bash' \
     'set -Eeuo pipefail' \
     'printf "pulseaudio %s\\n" "$*" >> "${TLD_TEST_CALL_LOG:?}"' \
+    'mkdir -p "${TLD_PROC_ROOT:?}/$$"' \
+    'printf "%s (pulseaudio) R 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 %s\\n" "$$" "${TLD_TEST_START_TICKS:?}" > "${TLD_PROC_ROOT:?}/$$/stat"' \
+    'printf "/usr/bin/pulseaudio\\0--exit-idle-time=-1\\0" > "${TLD_PROC_ROOT:?}/$$/cmdline"' \
     'if [[ "${TLD_TEST_AUDIO_NEVER_READY:-0}" != 1 ]]; then' \
     '  : > "${TLD_TEST_ROOT:?}/audio-ready"' \
     'fi' \
@@ -126,8 +129,6 @@ _tld_make_audio_proc() {
 }
 
 @test "audio start launches an owned daemon and records it" {
-  _tld_make_audio_proc
-
   run bash -c '
     source "$TLD_LIB_DIR/tld-common.sh"
     source "$TLD_LIB_DIR/tld-process.sh"
@@ -141,10 +142,11 @@ _tld_make_audio_proc() {
   grep -q '^pulseaudio ' "$TLD_TEST_CALL_LOG"
   grep -q '^AUDIO_OWNER=owned$' "$TLD_STATE_DIR/audio-owner.env"
   [ -f "$TLD_STATE_DIR/processes/audio.env" ]
+  grep -q '^ROLE=audio$' "$TLD_STATE_DIR/processes/audio.env"
+  grep -q '^PID=[1-9][0-9]*$' "$TLD_STATE_DIR/processes/audio.env"
 }
 
 @test "audio start cleans up the owned daemon when readiness never arrives" {
-  _tld_make_audio_proc
   export TLD_TEST_AUDIO_NEVER_READY=1
   export TLD_TEST_KILL_REMOVES=1
 
@@ -158,9 +160,31 @@ _tld_make_audio_proc() {
 
   [ "$status" -ne 0 ]
   [[ "$output" == *"did not become ready"* ]]
-  if [[ -e "$TLD_PROC_ROOT/$TLD_TEST_AUDIO_PID" ]]; then
-    [ ! -f "$TLD_PROC_ROOT/$TLD_TEST_AUDIO_PID/stat" ]
-  fi
+  [ ! -e "$TLD_STATE_DIR/processes/audio.env" ]
+  [ ! -e "$TLD_STATE_DIR/audio-owner.env" ]
+}
+
+@test "audio start keeps a healthy owned daemon owned on restart" {
+  _tld_make_audio_proc
+  : > "$TLD_TEST_ROOT/audio-ready"
+  hash=$(tr '\0' '\n' < "$TLD_PROC_ROOT/$TLD_TEST_AUDIO_PID/cmdline" | sha256sum | awk '{print $1}')
+  mkdir -p "$TLD_STATE_DIR/processes"
+  printf 'ROLE=audio\nPID=%s\nSTART_TICKS=%s\nCOMMAND_HASH=%s\n' \
+    "$TLD_TEST_AUDIO_PID" "$TLD_TEST_START_TICKS" "$hash" > "$TLD_STATE_DIR/processes/audio.env"
+  printf 'AUDIO_OWNER=owned\n' > "$TLD_STATE_DIR/audio-owner.env"
+
+  run bash -c '
+    source "$TLD_LIB_DIR/tld-common.sh"
+    source "$TLD_LIB_DIR/tld-process.sh"
+    source "$TLD_LIB_DIR/tld-host-audio.sh"
+    tld_init_paths
+    tld_audio_start
+  '
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"owner=owned"* ]]
+  grep -q '^pulseaudio ' "$TLD_TEST_CALL_LOG" && return 1 || true
+  grep -q '^AUDIO_OWNER=owned$' "$TLD_STATE_DIR/audio-owner.env"
 }
 
 @test "audio stop leaves an external endpoint untouched" {

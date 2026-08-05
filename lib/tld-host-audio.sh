@@ -5,11 +5,6 @@ if ! declare -F tld_init_paths >/dev/null 2>&1 || ! declare -F tld_process_stop 
   source "${BASH_SOURCE[0]%/*}/tld-process.sh"
 fi
 
-_tld_audio_lib_dir=${BASH_SOURCE[0]%/*}
-if [[ "$_tld_audio_lib_dir" == "${BASH_SOURCE[0]}" ]]; then
-  _tld_audio_lib_dir=.
-fi
-
 _tld_audio_error() {
   printf 'audio: %s\n' "$*" >&2
   return 1
@@ -50,12 +45,24 @@ _tld_audio_record_owner() {
 
 tld_audio_start() {
   local endpoint sink pid command_hash record_file
-  local result=0
+  local result=0 attempts
 
   tld_require_command pactl || return 1
   tld_require_command pulseaudio || return 1
   endpoint=$(_tld_audio_endpoint)
   sink=$(_tld_audio_sink)
+
+  record_file="${TLD_STATE_DIR:?TLD_STATE_DIR must be initialized}/processes/audio.env"
+  if [[ -e "$record_file" ]] && tld_process_is_owned audio; then
+    if tld_audio_is_ready; then
+      _tld_audio_record_owner owned || return 1
+      TLD_AUDIO_OWNER=owned
+      printf 'PASS audio endpoint=%s owner=owned(reused)\n' "$endpoint"
+      return 0
+    fi
+    _tld_audio_error 'owned PulseAudio process is wedged; restarting it'
+    tld_audio_stop_if_owned || true
+  fi
 
   if tld_audio_is_ready; then
     _tld_audio_record_owner external || return 1
@@ -64,40 +71,38 @@ tld_audio_start() {
     return 0
   fi
 
-  record_file="${TLD_STATE_DIR:?TLD_STATE_DIR must be initialized}/processes/audio.env"
-  if [[ -e "$record_file" ]] && tld_process_is_owned audio; then
-    _tld_audio_record_owner owned || return 1
-    TLD_AUDIO_OWNER=owned
-    printf 'PASS audio endpoint=%s owner=owned(recorded)\n' "$endpoint"
-    return 0
-  fi
-
-  if ! pulseaudio --daemonize --exit-idle-time=-1 \
-    --load="module-native-protocol-tcp auth-anonymous=1 auth-ip-acl=127.0.0.1 port=4713"; then
-    _tld_audio_error "cannot start PulseAudio daemon on $endpoint"
-    return 1
-  fi
-
-  pid=$(pgrep -x pulseaudio | head -n 1) || {
-    _tld_audio_error 'PulseAudio daemon started but no pulseaudio PID was found'
-    return 1
-  }
+  pulseaudio --exit-idle-time=-1 \
+    --load="module-native-protocol-tcp auth-anonymous=1 auth-ip-acl=127.0.0.1 port=4713" &
+  pid=$!
   if ! [[ "$pid" =~ ^[1-9][0-9]*$ ]]; then
     _tld_audio_error "invalid PulseAudio PID after start: $pid"
     return 1
   fi
-  if ! command_hash=$(tr '\0' '\n' < "${TLD_PROC_ROOT:-/proc}/$pid/cmdline" | sha256sum | awk '{print $1}'); then
-    _tld_audio_error 'cannot hash PulseAudio command line'
+  command_hash=''
+  attempts=0
+  while (( attempts < 20 )); do
+    if [[ -s "${TLD_PROC_ROOT:-/proc}/$pid/cmdline" ]] &&
+      command_hash=$(tr '\0' '\n' < "${TLD_PROC_ROOT:-/proc}/$pid/cmdline" 2>/dev/null | sha256sum | awk '{print $1}'); then
+      break
+    fi
+    command_hash=''
+    attempts=$((attempts + 1))
+    sleep 0.1
+  done
+  if [[ -z "$command_hash" ]]; then
+    kill "$pid" 2>/dev/null || true
+    _tld_audio_error 'cannot read PulseAudio command line after start'
     return 1
   fi
   if ! tld_process_record audio "$pid" "$command_hash"; then
+    kill "$pid" 2>/dev/null || true
     _tld_audio_error 'cannot record owned PulseAudio process'
     return 1
   fi
   _tld_audio_record_owner owned || result=1
   TLD_AUDIO_OWNER=owned
 
-  local attempts=0
+  attempts=0
   while (( attempts < 20 )); do
     if tld_audio_is_ready; then
       printf 'PASS audio endpoint=%s owner=owned pid=%s\n' "$endpoint" "$pid"

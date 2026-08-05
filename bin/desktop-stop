@@ -55,8 +55,10 @@ _tld_stop_main() {
   fi
   TLD_STOP_RESULT_FILE="$TLD_STATE_DIR/stop.result"
 
-  if ! tld_process_stop desktop; then
-    result=1
+  if [[ -f "$TLD_STATE_DIR/processes/desktop.env" && ! -L "$TLD_STATE_DIR/processes/desktop.env" ]]; then
+    if ! tld_process_stop desktop; then
+      result=1
+    fi
   fi
   if ! tld_audio_stop_if_owned; then
     result=1
