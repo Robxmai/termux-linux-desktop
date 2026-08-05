@@ -1,0 +1,23 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ludeeus/action-shellcheck@master
+      - uses: mfinelli/setup-shfmt@v3
+        with:
+          shfmt-version: '3.8.0'
+      - name: Install bats
+        run: sudo apt-get update && sudo apt-get install -y bats python3
+      - name: Format check
+        run: shfmt -d bin lib tests
+      - name: Script checks
+        run: bash tests/test_scripts.sh
+      - name: Bats suite
+        run: bats tests

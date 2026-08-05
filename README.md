@@ -39,16 +39,19 @@ F-Droid and GitHub builds.
 From the repository checkout, run these commands in the Termux host:
 
 ```sh
-pkg install -y proot-distro pulseaudio
-command -v flock
+pkg install -y git proot-distro pulseaudio
+git clone https://github.com/Robxmai/termux-linux-desktop.git
+cd termux-linux-desktop
 bash bin/install-toolkit
 desktop-install
 ```
 
-`desktop-install` creates the pinned Ubuntu 24.04 PRoot guest named
+`desktop-install` creates the pinned Ubuntu 24.04 PRoot environment named
 `tld-ubuntu`, provisions the non-root `tld` user, and installs the base XFCE
 desktop. Start the matching Termux:X11 Android app before launching the
 desktop; installation warns when its socket is not ready.
+
+See [docs/INSTALL.md](docs/INSTALL.md) for the full installation guide.
 
 The base installation does not require package upgrades, repository changes,
 GPU acceleration, Box64, Box86, Wine, Steam, or game packages. Add optional
