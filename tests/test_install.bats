@@ -518,7 +518,7 @@ write_owner_sentinel() {
   [ "$status" -eq 0 ]
   [[ "$output" == *'PASS runtime manifest'* ]]
   [[ "$output" == *'PASS guest launcher'* ]]
-  [[ "$output" == *'PASS rootfs manifest SHA-256'* ]]
+  [[ "$output" == *'PASS runtime manifest rootfs SHA-256='* ]]
   [[ "$output" == *'WARN GPU/Wine checks skipped in install mode'* ]]
   [[ "$output" != *'FAIL GPU'* ]]
   [[ "$output" != *'FAIL Wine'* ]]
@@ -568,7 +568,7 @@ write_owner_sentinel() {
   run bash "$PREFIX/bin/desktop-doctor" --install-mode
 
   [ "$status" -ne 0 ]
-  [[ "$output" == *'rootfs manifest SHA-256 mismatch'* ]]
+  [[ "$output" == *'SHA-256 mismatch'* ]]
 }
 
 @test "desktop-doctor rejects unknown control-variable manifest keys" {

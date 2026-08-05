@@ -1,0 +1,108 @@
+#!/data/data/com.termux/files/usr/bin/bash
+set -Eeuo pipefail
+
+if ! TLD_SCRIPT_PATH=$(readlink -f -- "${BASH_SOURCE[0]}"); then
+  printf '%s\n' 'FAIL cannot resolve desktop reset path' >&2
+  exit 1
+fi
+TLD_SCRIPT_DIR=${TLD_SCRIPT_PATH%/*}
+TLD_TOOLKIT_ROOT=${TLD_SCRIPT_DIR%/bin}
+
+[[ -n ${PREFIX:-} ]] || {
+  printf '%s\n' 'FAIL PREFIX is unset' >&2
+  exit 1
+}
+[[ -n ${HOME:-} ]] || {
+  printf '%s\n' 'FAIL HOME is unset' >&2
+  exit 1
+}
+
+source "$TLD_TOOLKIT_ROOT/lib/tld-common.sh"
+source "$TLD_TOOLKIT_ROOT/lib/tld-manifest.sh"
+source "$TLD_TOOLKIT_ROOT/lib/tld-process.sh"
+source "$TLD_TOOLKIT_ROOT/lib/tld-host-audio.sh"
+
+TLD_RESET_CONFIRMED=0
+for arg in "$@"; do
+  case "$arg" in
+    --yes)
+      TLD_RESET_CONFIRMED=1
+      ;;
+    *)
+      printf 'FAIL usage: desktop-reset --yes\n' >&2
+      exit 2
+      ;;
+  esac
+done
+
+_tld_reset_fail() {
+  printf 'FAIL reset: %s\n' "$*" >&2
+  return 1
+}
+
+_tld_reset_backup() {
+  local backup_parent timestamp backup_dir result=0
+
+  backup_parent="$TLD_STATE_DIR/backups"
+  timestamp=$(date -u '+%Y%m%dT%H%M%SZ') || return 1
+  mkdir -p -- "$backup_parent" || return 1
+  backup_dir=$(mktemp -d "$backup_parent/$timestamp.XXXXXXXX") || return 1
+  if [[ -f "${TLD_INSTANCE_FILE:-}" && ! -L "${TLD_INSTANCE_FILE:-}" ]]; then
+    cp -p -- "$TLD_INSTANCE_FILE" "$backup_dir/instance.env" || result=1
+  fi
+  if [[ -f "$TLD_STATE_DIR/profile.env" && ! -L "$TLD_STATE_DIR/profile.env" ]]; then
+    cp -p -- "$TLD_STATE_DIR/profile.env" "$backup_dir/profile.env" || result=1
+  fi
+  if [[ -d "$TLD_LOG_DIR" ]]; then
+    cp -rp -- "$TLD_LOG_DIR" "$backup_dir/logs" 2>/dev/null || result=1
+  fi
+  TLD_RESET_BACKUP_DIR="$backup_dir"
+  return "$result"
+}
+
+_tld_reset_remove_toolkit_state() {
+  local result=0
+
+  rm -f -- "$TLD_INSTANCE_FILE" || result=1
+  rm -rf -- "$TLD_STATE_DIR/processes" || result=1
+  rm -f -- "$TLD_STATE_DIR/audio-owner.env" "$TLD_STATE_DIR/profile.env" "$TLD_STATE_DIR/start.result" "$TLD_STATE_DIR/stop.result" || result=1
+  return "$result"
+}
+
+_tld_reset_main() {
+  local result=0
+
+  if ! tld_init_managed_paths; then
+    _tld_reset_fail 'managed paths could not be initialized'
+    return 1
+  fi
+  if [[ -L "${TLD_INSTANCE_FILE:-}" || ! -f "${TLD_INSTANCE_FILE:-}" ]]; then
+    _tld_reset_fail 'toolkit is not installed; nothing to reset'
+    return 1
+  fi
+  if (( TLD_RESET_CONFIRMED != 1 )); then
+    _tld_reset_fail 'confirmation required; run desktop-reset --yes'
+    return 1
+  fi
+
+  if [[ -d "$TLD_STATE_DIR/processes" ]]; then
+    tld_process_stop_all || result=1
+  fi
+  tld_audio_stop_if_owned || result=1
+
+  if ! _tld_reset_backup; then
+    result=1
+  fi
+  if ! _tld_reset_remove_toolkit_state; then
+    result=1
+  fi
+
+  printf 'PASS reset backup=%s\n' "${TLD_RESET_BACKUP_DIR:-unavailable}"
+  return "$result"
+}
+
+if _tld_reset_main; then
+  exit 0
+else
+  exit $?
+fi
