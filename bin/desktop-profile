@@ -39,7 +39,15 @@ _tld_profile_active() {
 }
 
 _tld_profile_list() {
-  printf '%s\n' 'base'
+  local profile_file name
+
+  for profile_file in "$TLD_TOOLKIT_ROOT"/profiles/*.env; do
+    [[ -e "$profile_file" && ! -L "$profile_file" ]] || continue
+    name=${profile_file##*/}
+    name=${name%.env}
+    tld_validate_name "$name" || continue
+    printf '%s\n' "$name"
+  done
   printf 'active: %s\n' "$(_tld_profile_active)"
 }
 
@@ -111,11 +119,15 @@ case "$TLD_PROFILE_ACTION" in
     exit 0
     ;;
   apply)
-    _tld_profile_apply
+    if ! _tld_profile_apply; then
+      exit 1
+    fi
     exit 0
     ;;
   remove)
-    _tld_profile_remove
+    if ! _tld_profile_remove; then
+      exit 1
+    fi
     exit 0
     ;;
   *)

@@ -46,7 +46,7 @@ setup() {
   printf '%s\n' \
     '#!/usr/bin/env bash' \
     'printf "uname\\n" >> "${TLD_TEST_CALL_LOG:?}"' \
-    'printf "%s\\n" "aarch64"' \
+    'printf "%s\\n" "${TLD_TEST_ARCH:-aarch64}"' \
     > "$TLD_TEST_BIN/uname"
 
   printf '%s\n' \
@@ -61,6 +61,18 @@ setup() {
     '[[ -n "$REAL_FLOCK" ]] || exit 127' \
     'exec "$REAL_FLOCK" "$@"' \
     > "$TLD_TEST_BIN/flock"
+
+  kill() {
+    if [[ "${TLD_TEST_MODE:-0}" != 1 ]]; then
+      command kill "$@"
+      return $?
+    fi
+    if [[ "${TLD_TEST_KILL_REMOVES:-0}" == 1 ]]; then
+      rm -rf -- "${TLD_PROC_ROOT:?}/${2:?}"
+    fi
+    return 0
+  }
+  export -f kill
 
   chmod +x "$TLD_TEST_BIN"/*
 }
@@ -175,20 +187,26 @@ PY
   [[ "$output" == *'FAIL Termux:X11 socket is not ready'* ]]
 }
 
-@test "doctor --json emits the required top-level keys" {
+@test "doctor full mode exits nonzero when architecture is unsupported" {
+  _tld_write_manifest
+  TLD_TEST_ARCH=x86_64
+  export TLD_TEST_ARCH
+
+  run bash "$BATS_TEST_DIRNAME/../bin/desktop-doctor"
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'FAIL architecture=x86_64'* ]]
+}
+
+@test "doctor --json emits a valid document with the required top-level keys" {
   _tld_write_manifest
 
   run bash "$BATS_TEST_DIRNAME/../bin/desktop-doctor" --json
 
   [ "$status" -eq 0 ]
+  printf '%s\n' "$output" | python3 -c 'import json, sys; d = json.load(sys.stdin); assert set(d.keys()) == {"toolkit_version", "architecture", "storage", "rootfs", "display", "audio", "gpu", "processes", "profile"}, d.keys()'
   [[ "$output" == *'"toolkit_version": "0.1.0"'* ]]
   [[ "$output" == *'"architecture": "aarch64"'* ]]
-  [[ "$output" == *'"storage":'* ]]
-  [[ "$output" == *'"rootfs":'* ]]
-  [[ "$output" == *'"display":'* ]]
-  [[ "$output" == *'"audio":'* ]]
-  [[ "$output" == *'"gpu":'* ]]
-  [[ "$output" == *'"processes":'* ]]
   [[ "$output" == *'"profile": "base"'* ]]
 }
 
@@ -223,4 +241,21 @@ PY
   backup_dir=$(printf '%s\n' "$output" | sed -n 's/^PASS reset backup=//p')
   [ -n "$backup_dir" ]
   [ -f "$backup_dir/instance.env" ]
+}
+
+@test "reset --yes stops and removes an owned process record" {
+  _tld_write_manifest
+  : > "$TLD_TEST_ROOT/audio-ready"
+  export TLD_TEST_KILL_REMOVES=1
+  mkdir -p "$TLD_PROC_ROOT/5252"
+  printf '5252 (start-guest.sh) R 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 9999\n' > "$TLD_PROC_ROOT/5252/stat"
+  printf '/usr/bin/start-guest.sh\0--flag\0' > "$TLD_PROC_ROOT/5252/cmdline"
+  hash=$(tr '\0' '\n' < "$TLD_PROC_ROOT/5252/cmdline" | sha256sum | awk '{print $1}')
+  mkdir -p "$TLD_STATE_DIR/processes"
+  printf 'ROLE=desktop\nPID=5252\nSTART_TICKS=9999\nCOMMAND_HASH=%s\n' "$hash" > "$TLD_STATE_DIR/processes/desktop.env"
+
+  run bash "$BATS_TEST_DIRNAME/../bin/desktop-reset" --yes
+
+  [ "$status" -eq 0 ]
+  [ ! -e "$TLD_STATE_DIR/processes/desktop.env" ]
 }

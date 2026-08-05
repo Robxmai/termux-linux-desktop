@@ -42,11 +42,19 @@ while (( $# > 0 )); do
       ;;
   esac
 done
+if [[ "$TLD_DOCTOR_MODE" == 'install' && "$TLD_DOCTOR_JSON" == 1 ]]; then
+  printf '%s\n' 'FAIL --install-mode and --json cannot be combined' >&2
+  exit 2
+fi
 
 TLD_DOCTOR_RESULT=0
 
 _tld_doctor_fail() {
-  printf 'FAIL %s\n' "$*"
+  if (( TLD_DOCTOR_JSON == 1 )); then
+    printf 'FAIL %s\n' "$*" >&2
+  else
+    printf 'FAIL %s\n' "$*"
+  fi
   TLD_DOCTOR_RESULT=1
 }
 
@@ -155,10 +163,6 @@ _tld_doctor_display() {
     printf 'PASS x11_socket=%s\n' "$socket_path"
     return 0
   fi
-  if [[ "$TLD_DOCTOR_MODE" == 'install' ]]; then
-    printf 'WARN Termux:X11 socket is not ready at %s; start the matching Android Termux:X11 app before launching the desktop\n' "$socket_path"
-    return 0
-  fi
   _tld_doctor_fail "Termux:X11 socket is not ready at $socket_path"
   return 1
 }
@@ -167,10 +171,7 @@ _tld_doctor_audio() {
   if tld_audio_status; then
     return 0
   fi
-  if [[ "$TLD_DOCTOR_MODE" == 'install' ]]; then
-    printf 'WARN audio endpoint is not reachable; it is started by desktop-start\n'
-    return 0
-  fi
+  _tld_doctor_fail 'audio endpoint is not reachable; run desktop-start to start the toolkit audio path'
   return 1
 }
 
@@ -299,8 +300,12 @@ if [[ "$TLD_DOCTOR_MODE" == 'install' ]]; then
 elif (( TLD_DOCTOR_JSON == 1 )); then
   _tld_doctor_json_emit
 else
-  tld_check_architecture || true
-  tld_check_storage 8589934592 12884901888 || true
+  if ! tld_check_architecture; then
+    TLD_DOCTOR_RESULT=1
+  fi
+  if ! tld_check_storage 8589934592 12884901888; then
+    TLD_DOCTOR_RESULT=1
+  fi
   _tld_doctor_manifest_valid || true
   _tld_doctor_rootfs || true
   _tld_doctor_guest_launcher || true

@@ -91,13 +91,14 @@ _tld_reset_main() {
   tld_audio_stop_if_owned || result=1
 
   if ! _tld_reset_backup; then
-    result=1
+    _tld_reset_fail "backup failed; reset aborted"
+    return 1
   fi
   if ! _tld_reset_remove_toolkit_state; then
     result=1
   fi
 
-  printf 'PASS reset backup=%s\n' "${TLD_RESET_BACKUP_DIR:-unavailable}"
+  printf 'PASS reset backup=%s\n' "$TLD_RESET_BACKUP_DIR"
   return "$result"
 }
 
