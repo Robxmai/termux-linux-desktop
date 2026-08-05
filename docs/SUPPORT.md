@@ -5,7 +5,7 @@
 | Tier | Capability | Status |
 |---|---|---|
 | 1 | ARM64 Termux + PRoot + XFCE + Termux:X11 | Supported baseline |
-| 2 | Audio, touch, keyboard, controller, VNC | Supported where the host exposes the feature |
+| 2 | Audio, touch, keyboard, controller | Supported where the host exposes the feature (VNC planned) |
 | 3 | Vulkan acceleration, initially validated on Qualcomm Adreno/Turnip | Experimental per device |
 | 4 | Box64/Box86 + Wine Windows applications | Experimental per application |
 | 5 | Steam and high-end D3D12 games | Stress-test only, per device and profile |
