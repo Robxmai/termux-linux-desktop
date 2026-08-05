@@ -233,12 +233,13 @@ test_manifest_sha256() {
 
   [ "$status" -eq 0 ]
   guest_command="$(<"$TLD_TEST_GUEST_COMMAND")"
-  [[ "$guest_command" == *'install -d -m 0755 /usr/local/lib/termux-linux-desktop'* ]]
+  [[ "$guest_command" == *'target_dir=/usr/local/lib/termux-linux-desktop'* ]]
+  [[ "$guest_command" == *'install -d -m 0755 "$target_dir"'* ]]
   [[ "$guest_command" == *'if ! cat > "$temporary"'* ]]
   [[ "$guest_command" == *'[[ ! -s "$temporary" ]]'* ]]
   [[ "$guest_command" == *'install -m 0755 "$temporary" "$copy_target"'* ]]
   [[ "$guest_command" == *'mv -f -- "$copy_target" "$target"'* ]]
-  [[ "$guest_command" == *'/usr/local/lib/termux-linux-desktop/start-guest.sh'* ]]
+  [[ "$guest_command" == *'target="$target_dir/start-guest.sh"'* ]]
   [[ "$guest_command" == *'#!/usr/bin/env bash'* ]]
   [[ "$guest_command" == *'export DISPLAY=${DISPLAY:-:0}'* ]]
   [[ "$guest_command" == *'export PULSE_SERVER=${PULSE_SERVER:-tcp:127.0.0.1:4713}'* ]]

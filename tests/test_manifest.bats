@@ -121,7 +121,7 @@ setup() {
 }
 
 @test "manifest temporary and final files use private permissions" {
-  temporary=$(tld_manifest_make_temp "$BATS_TEST_TMPDIR/private.XXXXXX")
+  temporary=$(_tld_manifest_make_temp "$BATS_TEST_TMPDIR/private.XXXXXX")
   [ "$(stat -c '%a' "$temporary")" = 600 ]
   rm -f -- "$temporary"
 

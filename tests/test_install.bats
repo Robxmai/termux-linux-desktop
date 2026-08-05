@@ -173,6 +173,9 @@ write_owner_sentinel() {
 }
 
 @test "install-toolkit fails for missing pkg before mutating state" {
+  if PATH="$TLD_REAL_PATH" command -v pkg >/dev/null 2>&1; then
+    skip 'real pkg is present on this host; covered by CI without it'
+  fi
   rm -f -- "$TLD_TEST_BIN/pkg"
 
   run_toolkit_install
@@ -281,6 +284,9 @@ write_owner_sentinel() {
 }
 
 @test "desktop-install completes base installation stages in order" {
+  if PATH="$TLD_REAL_PATH" command -v proot-distro >/dev/null 2>&1 && PATH="$TLD_REAL_PATH" command -v pactl >/dev/null 2>&1; then
+    skip 'real proot-distro and pactl are present on this host; covered by CI without them'
+  fi
   run_toolkit_install
   [ "$status" -eq 0 ]
   rm -f -- "$TLD_TEST_BIN/proot-distro" "$TLD_TEST_BIN/pactl"
@@ -300,6 +306,9 @@ write_owner_sentinel() {
 }
 
 @test "desktop-install runs the exact package command once" {
+  if PATH="$TLD_REAL_PATH" command -v proot-distro >/dev/null 2>&1 && PATH="$TLD_REAL_PATH" command -v pactl >/dev/null 2>&1; then
+    skip 'real proot-distro and pactl are present on this host; covered by CI without them'
+  fi
   run_toolkit_install
   [ "$status" -eq 0 ]
   rm -f -- "$TLD_TEST_BIN/proot-distro" "$TLD_TEST_BIN/pactl"
@@ -314,6 +323,9 @@ write_owner_sentinel() {
 }
 
 @test "desktop-install runs host preflight before the package command" {
+  if PATH="$TLD_REAL_PATH" command -v proot-distro >/dev/null 2>&1 && PATH="$TLD_REAL_PATH" command -v pactl >/dev/null 2>&1; then
+    skip 'real proot-distro and pactl are present on this host; covered by CI without them'
+  fi
   run_toolkit_install
   [ "$status" -eq 0 ]
   rm -f -- "$TLD_TEST_BIN/proot-distro" "$TLD_TEST_BIN/pactl"
@@ -746,6 +758,9 @@ write_owner_sentinel() {
 }
 
 @test "repeated toolkit and desktop installs remain idempotent" {
+  if PATH="$TLD_REAL_PATH" command -v proot-distro >/dev/null 2>&1 && PATH="$TLD_REAL_PATH" command -v pactl >/dev/null 2>&1; then
+    skip 'real proot-distro and pactl are present on this host; covered by CI without them'
+  fi
   run_toolkit_install
   [ "$status" -eq 0 ]
   run_toolkit_install
