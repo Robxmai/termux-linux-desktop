@@ -243,6 +243,18 @@ PY
   [ -f "$backup_dir/instance.env" ]
 }
 
+@test "reset --yes aborts and preserves state when the backup fails" {
+  _tld_write_manifest
+  printf 'blocked\n' > "$TLD_STATE_DIR/backups"
+
+  run bash "$BATS_TEST_DIRNAME/../bin/desktop-reset" --yes
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'backup failed'* ]]
+  [ -f "$TLD_INSTANCE_FILE" ]
+  [ -f "$TLD_STATE_DIR/profile.env" ] || true
+}
+
 @test "reset --yes stops and removes an owned process record" {
   _tld_write_manifest
   : > "$TLD_TEST_ROOT/audio-ready"
