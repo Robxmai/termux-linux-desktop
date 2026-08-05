@@ -21,6 +21,7 @@ source "$TLD_TOOLKIT_ROOT/lib/tld-common.sh"
 source "$TLD_TOOLKIT_ROOT/lib/tld-manifest.sh"
 source "$TLD_TOOLKIT_ROOT/lib/tld-process.sh"
 source "$TLD_TOOLKIT_ROOT/lib/tld-host-audio.sh"
+source "$TLD_TOOLKIT_ROOT/lib/tld-guest.sh"
 
 TLD_RESET_CONFIRMED=0
 for arg in "$@"; do
@@ -69,6 +70,52 @@ _tld_reset_remove_toolkit_state() {
   return "$result"
 }
 
+_tld_reset_toolkit_install_owned() {
+  local install_dir="${1-}"
+  local owner_file="$install_dir/.tld-toolkit-owner"
+  local -a owner_lines=()
+
+  [[ -d "$install_dir" && ! -L "$install_dir" && -f "$owner_file" && ! -L "$owner_file" ]] || return 1
+  mapfile -t owner_lines < "$owner_file" || return 1
+  (( ${#owner_lines[@]} == 2 )) || return 1
+  [[ "${owner_lines[0]}" == 'OWNER=termux-linux-desktop' && "${owner_lines[1]}" == 'VERSION=0.1.0' ]]
+}
+
+_tld_reset_remove_toolkit_install() {
+  local link_path canonical_install canonical_target result=0
+  local public_command
+
+  for public_command in desktop-install desktop-start desktop-stop desktop-status desktop-doctor desktop-profile desktop-reset; do
+    link_path="$PREFIX/bin/$public_command"
+    if [[ -L "$link_path" ]]; then
+      canonical_install=$(readlink -f -- "$TLD_INSTALL_DIR") || continue
+      canonical_target=$(readlink -f -- "$link_path") || continue
+      case "$canonical_target" in
+        "$canonical_install"/*)
+          rm -f -- "$link_path" || result=1
+          ;;
+      esac
+    fi
+  done
+
+  if _tld_reset_toolkit_install_owned "$TLD_INSTALL_DIR"; then
+    rm -rf -- "$TLD_INSTALL_DIR" || result=1
+  fi
+  return "$result"
+}
+
+_tld_reset_remove_container() {
+  local container
+
+  tld_require_command proot-distro || return 0
+  if _tld_guest_prepare_paths && _tld_guest_load_rootfs_env; then
+    container="$TLD_ROOTFS_CONTAINER"
+    if [[ "$container" == 'tld-ubuntu' ]]; then
+      proot-distro remove "$container"
+    fi
+  fi
+}
+
 _tld_reset_main() {
   local result=0
 
@@ -95,6 +142,12 @@ _tld_reset_main() {
     return 1
   fi
   if ! _tld_reset_remove_toolkit_state; then
+    result=1
+  fi
+  if ! _tld_reset_remove_toolkit_install; then
+    result=1
+  fi
+  if ! _tld_reset_remove_container; then
     result=1
   fi
 

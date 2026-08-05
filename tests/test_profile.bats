@@ -28,10 +28,25 @@ setup() {
 
   export TLD_TEST_ROOTFS_DIR="$PREFIX/var/lib/proot-distro/containers/tld-ubuntu/rootfs"
   export TLD_TEST_MANIFEST_FILE="$PREFIX/var/lib/proot-distro/containers/tld-ubuntu/manifest.json"
+  export TLD_ROOTFS_ENV_FILE="$TLD_TEST_ROOT/ubuntu.env"
   mkdir -p "$TLD_TEST_ROOTFS_DIR/usr/local/lib/termux-linux-desktop"
   printf '%s\n' '{"architecture":"arm64"}' > "$TLD_TEST_MANIFEST_FILE"
   printf '%s\n' '#!/usr/bin/env bash' > "$TLD_TEST_ROOTFS_DIR/usr/local/lib/termux-linux-desktop/start-guest.sh"
   chmod +x "$TLD_TEST_ROOTFS_DIR/usr/local/lib/termux-linux-desktop/start-guest.sh"
+  printf '%s\n' \
+    "TLD_ROOTFS_IMAGE='ubuntu:24.04'" \
+    "TLD_ROOTFS_CONTAINER='tld-ubuntu'" \
+    "TLD_ROOTFS_ARCH='aarch64'" \
+    "TLD_ROOTFS_MIN_PROOT_DISTRO='5.5.0'" \
+    "TLD_GUEST_USER='tld'" \
+    > "$TLD_ROOTFS_ENV_FILE"
+
+  printf '%s\n' \
+    '#!/usr/bin/env bash' \
+    'set -Eeuo pipefail' \
+    'printf "proot-distro %s\\n" "$*" >> "${TLD_TEST_CALL_LOG:?}"' \
+    'printf "%s\\n" "5.5.0"' \
+    > "$TLD_TEST_BIN/proot-distro"
 
   printf '%s\n' \
     '#!/usr/bin/env bash' \
@@ -241,6 +256,21 @@ PY
   backup_dir=$(printf '%s\n' "$output" | sed -n 's/^PASS reset backup=//p')
   [ -n "$backup_dir" ]
   [ -f "$backup_dir/instance.env" ]
+  grep -F 'proot-distro remove tld-ubuntu' "$TLD_TEST_CALL_LOG"
+}
+
+@test "reset --yes removes the toolkit install tree and its symlinks" {
+  _tld_write_manifest
+  : > "$TLD_TEST_ROOT/audio-ready"
+  mkdir -p "$TLD_INSTALL_DIR/bin"
+  printf '%s\n' 'OWNER=termux-linux-desktop' 'VERSION=0.1.0' > "$TLD_INSTALL_DIR/.tld-toolkit-owner"
+  ln -s -- "$TLD_INSTALL_DIR/bin/desktop-install" "$PREFIX/bin/desktop-install"
+
+  run bash "$BATS_TEST_DIRNAME/../bin/desktop-reset" --yes
+
+  [ "$status" -eq 0 ]
+  [ ! -e "$TLD_INSTALL_DIR" ]
+  [ ! -L "$PREFIX/bin/desktop-install" ]
 }
 
 @test "reset --yes aborts and preserves state when the backup fails" {
