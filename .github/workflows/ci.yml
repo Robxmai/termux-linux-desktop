@@ -10,7 +10,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ludeeus/action-shellcheck@master
-      - uses: mfinelli/setup-shfmt@v3
+      - uses: mfinelli/setup-shfmt@v4
         with:
           shfmt-version: '3.8.0'
       - name: Install bats
