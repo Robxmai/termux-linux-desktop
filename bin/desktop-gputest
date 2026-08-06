@@ -1,0 +1,66 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# desktop-gputest — GPU render diagnostics (Winlator TestD3D / GPUInfo).
+#   desktop-gputest [--info]
+set -Eeuo pipefail
+
+if ! TLD_SCRIPT_PATH=$(readlink -f -- "${BASH_SOURCE[0]}"); then
+  printf '%s\n' 'FAIL cannot resolve gputest path' >&2
+  exit 1
+fi
+TLD_SCRIPT_DIR=${TLD_SCRIPT_PATH%/*}
+TLD_TOOLKIT_ROOT=${TLD_SCRIPT_DIR%/bin}
+
+[[ -n ${PREFIX:-} ]] || { printf '%s\n' 'FAIL PREFIX is unset' >&2; exit 1; }
+[[ -n ${HOME:-} ]] || { printf '%s\n' 'FAIL HOME is unset' >&2; exit 1; }
+
+source "$TLD_TOOLKIT_ROOT/lib/tld-common.sh"
+
+TLD_GPUTEST_INFO=0
+if [[ "${1:-}" == '--info' ]]; then
+  TLD_GPUTEST_INFO=1
+elif [[ -n "${1:-}" ]]; then
+  printf 'usage: desktop-gputest [--info]\n' >&2
+  exit 1
+fi
+
+_tld_gputest_fail() {
+  printf 'FAIL desktop-gputest: %s\n' "$1" >&2
+  return 1
+}
+
+tld_gputest_main() {
+  local rootfs_dir
+
+  if ! tld_init_managed_paths; then
+    _tld_gputest_fail 'cannot initialize managed toolkit paths'
+    return 1
+  fi
+  rootfs_dir="$PREFIX/var/lib/proot-distro/containers/tld-ubuntu/rootfs"
+  [[ -f "$rootfs_dir/opt/apps/TestD3D.exe" && -f "$rootfs_dir/opt/apps/GPUInfo.exe" ]] || {
+    _tld_gputest_fail 'diagnostic apps are not installed (run desktop-install first)'
+    return 1
+  }
+
+  if [[ "$TLD_GPUTEST_INFO" == 1 ]]; then
+    proot-distro login tld-ubuntu --user tld --shared-tmp --shared-x11 -- \
+      env DISPLAY=:0 WINEPREFIX=/home/tld/wow-tests/desktop-wow-prefix \
+      /usr/local/bin/box64 /opt/wine-runtime/wine-11.11-amd64-wow64/bin/wine \
+      /opt/apps/GPUInfo.exe
+    return $?
+  fi
+
+  nohup proot-distro login tld-ubuntu --user tld --shared-tmp --shared-x11 -- \
+    env DISPLAY=:0 WINEPREFIX=/home/tld/wow-tests/desktop-wow-prefix \
+    /usr/local/bin/box64 /opt/wine-runtime/wine-11.11-amd64-wow64/bin/wine \
+    /opt/apps/TestD3D.exe >/dev/null 2>&1 &
+  printf 'PASS gputest started (TestD3D on display :0)\n'
+  return 0
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  if tld_gputest_main; then
+    exit 0
+  else
+    exit $?
+  fi
+fi

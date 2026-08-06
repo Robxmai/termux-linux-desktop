@@ -61,6 +61,37 @@ recycled PID or an unrelated process is never touched.
 
 ## Windows compatibility
 
-Box64, Box86, and Wine are optional experimental layers. They are not
-installed by the base profile and each Windows application is expected to use
-its own prefix.
+Box64 (master pin `ba373ab`), Wine 11.11 (wow64), and DXVK 2.6.1 are provisioned by
+`desktop-install` (stage `guest-runtime`) and pinned by the base profile
+v2. Each Windows application uses its own Wine prefix; games registered with
+`wow-install` get a writable overlay (Cache/Errors/Logs/Screenshots/WTF) bound
+over the read-only game tree, and the launcher audits the source tree for
+modifications on exit.
+
+### Runtime layout (guest)
+
+| Path | Purpose |
+|---|---|
+| `/opt/wine-runtime/wine-11.11-amd64-wow64` | Wine runtime tree |
+| `/usr/local/bin/box64` | Box64 master pin `ba373ab` (source build; pin marker at `/usr/local/etc/box64-pin.env`) |
+| `/usr/lib/aarch64-linux-gnu/libvulkan_freedreno.so` | Mesa Turnip 24.1.0 (stock backup at `.toolkit-backup`) |
+| `/usr/local/etc/dxvk.conf` | Default DXVK config (GPU spoof) |
+| `/usr/local/etc/wow-performance-profile.env` | Game launcher profile |
+| `/usr/local/lib/wine-runtime-env.sh` | Shared Wine/Box64 runtime defaults |
+| `/usr/local/bin/wow-launcher` | Game launcher (overlay + audit) |
+| `/opt/apps/` | Diagnostics (TestD3D, GPUInfo) |
+| `/opt/firefox-esr` | Firefox ESR (default browser for the desktop user) |
+
+### Host layer additions
+
+| Path | Purpose |
+|---|---|
+| `$TLD_STATE_DIR/runtime-cache` | Downloaded runtime components |
+| `$TLD_STATE_DIR/wow.env` | Registered game install (dir, overlay, prefix) |
+
+### Component cache
+
+`lib/tld-wine-runtime.sh` downloads components on the host into
+`$TLD_STATE_DIR/runtime-cache` and bind-mounts the cache into the guest for
+provisioning; the guest script `rootfs/guest-runtime-provision.sh` is
+idempotent and skippable per component (`TLD_SKIP_*`).

@@ -33,8 +33,48 @@ desktop-install
 
 `install-toolkit` copies the toolkit into the Termux prefix and creates the
 public commands. `desktop-install` preflights the device, installs the pinned
-Ubuntu 24.04 environment, provisions XFCE and the desktop user, and writes the
-runtime manifest.
+Ubuntu 24.04 environment, provisions XFCE and the desktop user, installs the
+GPU/Wine runtime, and writes the runtime manifest.
+
+## Wine runtime source (required for the GPU/Wine runtime)
+
+`desktop-install` provisions Box64 (master pin, built from source), Mesa Turnip
+24.1.0, DXVK 2.6.1, Firefox ESR, and the diagnostic apps automatically. The
+Wine runtime itself is provided by you:
+
+1. Build Wine 11.11 for ARM64 (wow64 mode) or use a trusted prebuilt tree —
+   see `docs/WINE_RUNTIME.md`.
+2. Create a tarball of the wine tree:
+
+   ```bash
+   tar czf wine-11.11-amd64-wow64.tar.gz -C /path/to wine-11.11-amd64-wow64
+   ```
+
+3. Run the install with the tarball:
+
+   ```bash
+   TLD_WINE_RUNTIME_TARBALL=/path/to/wine-11.11-amd64-wow64.tar.gz desktop-install
+   ```
+
+`desktop-install` is idempotent; the runtime components are cached under
+`$PREFIX/var/lib/termux-linux-desktop/runtime-cache`.
+
+## Games
+
+```bash
+wow-install --game-dir "$HOME/WoW 3.3.5a"   # register a WoW install
+wow-launch                                    # launch it on the desktop
+desktop-gputest                               # GPU render test (TestD3D)
+desktop-gputest --info                        # GPU info report
+```
+
+## Remote access
+
+```bash
+desktop-vnc start      # x11vnc on :5900, password: termux
+desktop-vnc status
+desktop-vnc stop
+```
 
 ## Start the desktop
 

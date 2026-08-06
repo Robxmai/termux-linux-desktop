@@ -242,6 +242,19 @@ tld_install_main() {
     return "$result"
   fi
 
+  TLD_INSTALL_STAGE=guest-runtime
+  tld_install_record_stage guest-runtime
+  if [[ "${REQUIRES_WINE-}" == true ]]; then
+    source "$TLD_TOOLKIT_ROOT/lib/tld-wine-runtime.sh"
+    if tld_wine_runtime_install; then
+      :
+    else
+      result=$?
+      tld_install_fail "$TLD_INSTALL_STAGE" "$result" 'guest wine/GPU runtime provisioning failed'
+      return "$result"
+    fi
+  fi
+
   TLD_INSTALL_STAGE=guest-launcher
   tld_install_record_stage launcher-copy
   if tld_guest_copy_launcher; then
@@ -259,13 +272,13 @@ tld_install_main() {
   if [[ -f "$profile_file" && ! -L "$profile_file" ]] &&
     tld_read_env_file "$profile_file" "${profile_keys[@]}" &&
     [[ "${PROFILE_NAME-}" == base &&
-      "${PROFILE_VERSION-}" == 1 &&
+      "${PROFILE_VERSION-}" == 2 &&
       "${DISPLAY_DEFAULT-}" == :0 &&
       "${PULSE_SERVER_DEFAULT-}" == tcp:127.0.0.1:4713 &&
       "${GUEST_CONTAINER-}" == tld-ubuntu &&
       "${GUEST_USER-}" == tld &&
-      "${REQUIRES_GPU-}" == false &&
-      "${REQUIRES_WINE-}" == false ]]; then
+      "${REQUIRES_GPU-}" == true &&
+      "${REQUIRES_WINE-}" == true ]]; then
     :
   else
     result=$?
@@ -295,6 +308,8 @@ tld_install_main() {
     tld_manifest_set rootfs_image "$TLD_ROOTFS_IMAGE" &&
     tld_manifest_set rootfs_container "$TLD_ROOTFS_CONTAINER" &&
     tld_manifest_set profile base &&
+    tld_manifest_set profile_version 2 &&
+    tld_manifest_set runtime "$(tld_wine_runtime_versions 2>/dev/null || printf 'unknown')" &&
     tld_manifest_set rootfs_manifest_sha256 "$TLD_GUEST_ROOTFS_MANIFEST_SHA256" &&
     tld_manifest_commit "$TLD_INSTANCE_FILE"; then
     :

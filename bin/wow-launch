@@ -1,0 +1,61 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# wow-launch — launch the registered WoW install on the toolkit desktop.
+set -Eeuo pipefail
+
+if ! TLD_SCRIPT_PATH=$(readlink -f -- "${BASH_SOURCE[0]}"); then
+  printf '%s\n' 'FAIL cannot resolve wow launcher path' >&2
+  exit 1
+fi
+TLD_SCRIPT_DIR=${TLD_SCRIPT_PATH%/*}
+TLD_TOOLKIT_ROOT=${TLD_SCRIPT_DIR%/bin}
+
+[[ -n ${PREFIX:-} ]] || { printf '%s\n' 'FAIL PREFIX is unset' >&2; exit 1; }
+[[ -n ${HOME:-} ]] || { printf '%s\n' 'FAIL HOME is unset' >&2; exit 1; }
+
+source "$TLD_TOOLKIT_ROOT/lib/tld-common.sh"
+
+tld_wow_launch_main() {
+  local state_file game_dir overlay_root prefix wine_bin launcher
+  local cache errors logs screenshots wtf
+
+  if ! tld_init_managed_paths; then
+    printf '%s\n' 'FAIL cannot initialize managed toolkit paths' >&2
+    return 1
+  fi
+  state_file="$TLD_STATE_DIR/wow.env"
+  if [[ ! -f "$state_file" ]]; then
+    printf '%s\n' 'FAIL no wow install registered (run wow-install first)' >&2
+    return 1
+  fi
+  if ! tld_read_env_file "$state_file" \
+    game_dir overlay_root prefix wine_bin launcher; then
+    printf '%s\n' 'FAIL cannot read wow state' >&2
+    return 1
+  fi
+
+  [[ -f "$game_dir/Wow.exe" ]] || {
+    printf 'FAIL game executable missing: %s/Wow.exe\n' "$game_dir" >&2
+    return 1
+  }
+
+  exec proot-distro login tld-ubuntu --user tld --shared-tmp --shared-x11 \
+    --bind "$overlay_root/Cache:$game_dir/Cache" \
+    --bind "$overlay_root/Errors:$game_dir/Errors" \
+    --bind "$overlay_root/Logs:$game_dir/Logs" \
+    --bind "$overlay_root/Screenshots:$game_dir/Screenshots" \
+    --bind "$overlay_root/WTF:$game_dir/WTF" \
+    -- env DISPLAY=:0 PULSE_SERVER=tcp:127.0.0.1:4713 \
+    WOW_GAME_DIR="$game_dir" \
+    WOW_OVERLAY_ROOT="$overlay_root" \
+    WOW_WINEPREFIX="$prefix" \
+    WOW_OVERLAY_BOUND=1 \
+    "$launcher"
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  if tld_wow_launch_main; then
+    exit 0
+  else
+    exit $?
+  fi
+fi

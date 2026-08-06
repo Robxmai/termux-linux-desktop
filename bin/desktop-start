@@ -43,13 +43,13 @@ _tld_start_load_base_profile() {
   if [[ -f "$profile_file" && ! -L "$profile_file" ]] &&
     tld_read_env_file "$profile_file" "${profile_keys[@]}" &&
     [[ "${PROFILE_NAME-}" == base &&
-      "${PROFILE_VERSION-}" == 1 &&
+      "${PROFILE_VERSION-}" == 2 &&
       "${DISPLAY_DEFAULT-}" == :0 &&
       "${PULSE_SERVER_DEFAULT-}" == tcp:127.0.0.1:4713 &&
       "${GUEST_CONTAINER-}" == tld-ubuntu &&
       "${GUEST_USER-}" == tld &&
-      "${REQUIRES_GPU-}" == false &&
-      "${REQUIRES_WINE-}" == false ]]; then
+      "${REQUIRES_GPU-}" == true &&
+      "${REQUIRES_WINE-}" == true ]]; then
     TLD_DISPLAY="${DISPLAY_DEFAULT}"
     TLD_PULSE_SERVER="${PULSE_SERVER_DEFAULT}"
     TLD_GUEST_CONTAINER="${GUEST_CONTAINER}"

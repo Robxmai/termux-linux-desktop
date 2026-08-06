@@ -1,0 +1,186 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# wow-install — register a World of Warcraft 3.3.5a install with the toolkit.
+#   wow-install [--game-dir PATH] [--force]
+set -Eeuo pipefail
+
+if ! TLD_SCRIPT_PATH=$(readlink -f -- "${BASH_SOURCE[0]}"); then
+  printf '%s\n' 'FAIL cannot resolve wow install path' >&2
+  exit 1
+fi
+TLD_SCRIPT_DIR=${TLD_SCRIPT_PATH%/*}
+TLD_TOOLKIT_ROOT=${TLD_SCRIPT_DIR%/bin}
+
+[[ -n ${PREFIX:-} ]] || { printf '%s\n' 'FAIL PREFIX is unset' >&2; exit 1; }
+[[ -n ${HOME:-} ]] || { printf '%s\n' 'FAIL HOME is unset' >&2; exit 1; }
+
+source "$TLD_TOOLKIT_ROOT/lib/tld-common.sh"
+source "$TLD_TOOLKIT_ROOT/lib/tld-guest.sh"
+source "$TLD_TOOLKIT_ROOT/lib/tld-manifest.sh"
+
+TLD_ROOTFS_ENV_FILE="${TLD_ROOTFS_ENV_FILE:-$TLD_TOOLKIT_ROOT/rootfs/ubuntu-24.04.env}"
+if [[ -f "$TLD_ROOTFS_ENV_FILE" && ! -L "$TLD_ROOTFS_ENV_FILE" ]]; then
+  # shellcheck disable=SC1090
+  source "$TLD_ROOTFS_ENV_FILE"
+fi
+
+TLD_WOW_GAME_DIR="${TLD_WOW_GAME_DIR:-$HOME/WoW 3.3.5a}"
+TLD_WOW_FORCE=0
+
+while (($# > 0)); do
+  case "$1" in
+    --game-dir)
+      [[ -n ${2:-} ]] || { printf '%s\n' 'FAIL --game-dir requires a path' >&2; exit 1; }
+      TLD_WOW_GAME_DIR="$2"
+      shift 2
+      ;;
+    --force)
+      TLD_WOW_FORCE=1
+      shift
+      ;;
+    *)
+      printf 'usage: wow-install [--game-dir PATH] [--force]\n' >&2
+      exit 1
+      ;;
+  esac
+done
+
+_tld_wow_fail() {
+  printf 'FAIL wow-install: %s\n' "$1" >&2
+  return 1
+}
+
+_tld_wow_guest_runtime_marker() {
+  local rootfs_dir container_dir
+  if ! tld_init_managed_paths; then
+    return 1
+  fi
+  rootfs_dir="$PREFIX/var/lib/proot-distro/containers/tld-ubuntu/rootfs"
+  container_dir="$TLD_STATE_DIR"
+  if [[ -f "$rootfs_dir/usr/local/etc/termux-linux-desktop-runtime.env" ]]; then
+    printf '%s\n' "$rootfs_dir/usr/local/etc/termux-linux-desktop-runtime.env"
+    return 0
+  fi
+  return 1
+}
+
+_tld_wow_write_state() {
+  local state_file
+  tld_init_managed_paths || return 1
+  state_file="$TLD_STATE_DIR/wow.env"
+  if ! tld_manifest_begin wow ||
+    ! tld_manifest_set game_dir "$TLD_WOW_GAME_DIR" ||
+    ! tld_manifest_set overlay_root '/home/tld/wow-tests/desktop-wow-overlay' ||
+    ! tld_manifest_set prefix '/home/tld/wow-tests/desktop-wow-prefix' ||
+    ! tld_manifest_set wine_bin '/opt/wine-runtime/wine-11.11-amd64-wow64/bin/wine' ||
+    ! tld_manifest_set launcher '/usr/local/bin/wow-launcher' ||
+    ! tld_manifest_commit "$state_file"; then
+    return 1
+  fi
+  return 0
+}
+
+_tld_wow_guest_prepare() {
+  local guest_script
+  guest_script=$'set -Eeuo pipefail\n'
+  guest_script+="WOW_GAME_DIR='$TLD_WOW_GAME_DIR' WOW_OVERLAY_ROOT=/home/tld/wow-tests/desktop-wow-overlay /usr/local/lib/prepare-wow-overlay.sh\n"
+  guest_script+=$'mkdir -p /home/tld/Desktop /home/tld/.local/share/applications 2>/dev/null || true\n'
+  guest_script+=$'chown -R tld:tld /home/tld/wow-tests /home/tld/Desktop 2>/dev/null || true\n'
+  if ! _tld_guest_login_script "$guest_script"; then
+    return 1
+  fi
+  return 0
+}
+
+_tld_wow_guest_prefix() {
+  local guest_script
+  guest_script=$'set -Eeuo pipefail\n'
+  guest_script+=$'export DISPLAY=:0\n'
+  guest_script+=$'export WINEPREFIX=/home/tld/wow-tests/desktop-wow-prefix\n'
+  guest_script+=$'source /usr/local/lib/wine-runtime-env.sh\n'
+  guest_script+=$'mkdir -p /home/tld/wow-tests\n'
+  guest_script+=$'/usr/local/bin/box64 /opt/wine-runtime/wine-11.11-amd64-wow64/bin/wineboot --init >/dev/null 2>&1 || true\n'
+  guest_script+=$'WINEPREFIX=/home/tld/wow-tests/desktop-wow-prefix /usr/local/bin/box64 /opt/wine-runtime/wine-11.11-amd64-wow64/bin/wineboot -u >/dev/null 2>&1 || true\n'
+  guest_script+=$'test -f /home/tld/wow-tests/desktop-wow-prefix/system.reg\n'
+  if ! _tld_guest_login_script "$guest_script"; then
+    return 1
+  fi
+  return 0
+}
+
+_tld_wow_guest_icon() {
+  local icon_script
+  icon_script=$'set -Eeuo pipefail\n'
+  icon_script+=$'cat > /home/tld/wow-desktop.sh <<\'SH\'\n'
+  icon_script+=$'#!/usr/bin/env bash\n'
+  icon_script+=$'set -Eeuo pipefail\n'
+  icon_script+=$"exec env WOW_GAME_DIR='$TLD_WOW_GAME_DIR' WOW_OVERLAY_ROOT=/home/tld/wow-tests/desktop-wow-overlay WOW_WINEPREFIX=/home/tld/wow-tests/desktop-wow-prefix /usr/local/bin/wow-launcher\n"
+  icon_script+=$'SH\n'
+  icon_script+=$'chmod 0755 /home/tld/wow-desktop.sh\n'
+  icon_script+=$'cat > /home/tld/Desktop/World\ of\ Warcraft.desktop <<\'DESKTOP\'\n'
+  icon_script+=$'[Desktop Entry]\n'
+  icon_script+=$'Version=1.0\n'
+  icon_script+=$'Type=Application\n'
+  icon_script+=$'Name=World of Warcraft\n'
+  icon_script+=$'Comment=Wrath of the Lich King 3.3.5a\n'
+  icon_script+=$'Exec=/home/tld/wow-desktop.sh\n'
+  icon_script+=$'Terminal=false\n'
+  icon_script+=$'Categories=Game;\n'
+  icon_script+=$'DESKTOP\n'
+  icon_script+=$'chmod 0755 /home/tld/Desktop/World\ of\ Warcraft.desktop\n'
+  icon_script+=$'chown -R tld:tld /home/tld/wow-desktop.sh /home/tld/Desktop 2>/dev/null || true\n'
+  if ! _tld_guest_login_script "$icon_script"; then
+    return 1
+  fi
+  return 0
+}
+
+tld_wow_install_main() {
+  local state_file marker
+
+  if ! tld_init_managed_paths; then
+    _tld_wow_fail 'cannot initialize managed toolkit paths'
+    return 1
+  fi
+  if [[ ! -f "$TLD_WOW_GAME_DIR/Wow.exe" ]]; then
+    _tld_wow_fail "game directory has no Wow.exe: $TLD_WOW_GAME_DIR"
+    return 1
+  fi
+  if ! marker=$(_tld_wow_guest_runtime_marker); then
+    _tld_wow_fail 'wine/GPU runtime is not installed (run desktop-install first)'
+    return 1
+  fi
+
+  state_file="$TLD_STATE_DIR/wow.env"
+  if [[ -f "$state_file" && "${TLD_WOW_FORCE:-0}" != 1 ]]; then
+    printf 'PASS wow already installed (use --force to reinstall): %s\n' "$TLD_WOW_GAME_DIR"
+    return 0
+  fi
+
+  if ! _tld_wow_guest_prepare; then
+    _tld_wow_fail 'guest overlay preparation failed'
+    return 1
+  fi
+  if ! _tld_wow_guest_prefix; then
+    _tld_wow_fail 'guest wine prefix creation failed'
+    return 1
+  fi
+  if ! _tld_wow_guest_icon; then
+    _tld_wow_fail 'guest desktop icon creation failed'
+    return 1
+  fi
+  if ! _tld_wow_write_state; then
+    _tld_wow_fail 'wow state could not be written'
+    return 1
+  fi
+  printf 'PASS wow installed: %s\n' "$TLD_WOW_GAME_DIR"
+  printf 'launch with: wow-launch\n'
+  return 0
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  if tld_wow_install_main; then
+    exit 0
+  else
+    exit $?
+  fi
+fi

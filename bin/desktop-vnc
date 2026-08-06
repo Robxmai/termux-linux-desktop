@@ -1,0 +1,95 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# desktop-vnc — remote desktop access to the toolkit display.
+#   desktop-vnc start|stop|status
+set -Eeuo pipefail
+
+if ! TLD_SCRIPT_PATH=$(readlink -f -- "${BASH_SOURCE[0]}"); then
+  printf '%s\n' 'FAIL cannot resolve vnc path' >&2
+  exit 1
+fi
+TLD_SCRIPT_DIR=${TLD_SCRIPT_PATH%/*}
+TLD_TOOLKIT_ROOT=${TLD_SCRIPT_DIR%/bin}
+
+[[ -n ${PREFIX:-} ]] || { printf '%s\n' 'FAIL PREFIX is unset' >&2; exit 1; }
+[[ -n ${HOME:-} ]] || { printf '%s\n' 'FAIL HOME is unset' >&2; exit 1; }
+
+source "$TLD_TOOLKIT_ROOT/lib/tld-common.sh"
+
+TLD_VNC_ACTION="${1:-}"
+TLD_VNC_PORT="${TLD_VNC_PORT:-5900}"
+
+_tld_vnc_fail() {
+  printf 'FAIL desktop-vnc: %s\n' "$1" >&2
+  return 1
+}
+
+_tld_vnc_is_running() {
+  proot-distro login tld-ubuntu --user tld --shared-tmp -- \
+    bash -c 'pgrep -x x11vnc >/dev/null 2>&1'
+}
+
+_tld_vnc_start() {
+  if _tld_vnc_is_running; then
+    printf 'PASS vnc already running on port %s (password: termux)\n' "$TLD_VNC_PORT"
+    return 0
+  fi
+  if ! proot-distro login tld-ubuntu --user tld --shared-tmp --shared-x11 -- \
+    bash -c 'test -f /home/tld/.vncpasswd'; then
+    _tld_vnc_fail 'vnc password is not configured (run desktop-install first)'
+    return 1
+  fi
+  nohup proot-distro login tld-ubuntu --user tld --shared-tmp --shared-x11 -- \
+    x11vnc -display :0 -rfbauth /home/tld/.vncpasswd -rfbport "$TLD_VNC_PORT" \
+    -shared -forever -noxdamage -o /home/tld/x11vnc.log >/dev/null 2>&1 &
+  sleep 4
+  if _tld_vnc_is_running; then
+    local address
+    address=$(ip -4 addr show 2>/dev/null | awk '/inet / && $2 != "127.0.0.1/" {print $2; exit}' | cut -d/ -f1)
+    printf 'PASS vnc started on %s:%s (password: termux)\n' "${address:-<tablet-ip>}" "$TLD_VNC_PORT"
+    return 0
+  fi
+  _tld_vnc_fail 'x11vnc failed to start'
+  return 1
+}
+
+_tld_vnc_stop() {
+  if ! _tld_vnc_is_running; then
+    printf 'PASS vnc already stopped\n'
+    return 0
+  fi
+  proot-distro login tld-ubuntu --user tld --shared-tmp -- \
+    bash -c 'pkill -x x11vnc || true' >/dev/null 2>&1 || true
+  sleep 2
+  if _tld_vnc_is_running; then
+    _tld_vnc_fail 'x11vnc could not be stopped'
+    return 1
+  fi
+  printf 'PASS vnc stopped\n'
+  return 0
+}
+
+_tld_vnc_status() {
+  if _tld_vnc_is_running; then
+    printf 'PASS vnc status=running port=%s password=termux\n' "$TLD_VNC_PORT"
+    return 0
+  fi
+  printf 'PASS vnc status=stopped\n'
+  return 0
+}
+
+tld_vnc_main() {
+  case "$TLD_VNC_ACTION" in
+    start) _tld_vnc_start ;;
+    stop) _tld_vnc_stop ;;
+    status) _tld_vnc_status ;;
+    *) printf 'usage: desktop-vnc start|stop|status\n' >&2; return 1 ;;
+  esac
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  if tld_vnc_main; then
+    exit 0
+  else
+    exit $?
+  fi
+fi
