@@ -113,7 +113,7 @@ _tld_wow_guest_icon() {
   icon_script+=$'cat > /home/tld/wow-desktop.sh <<\'SH\'\n'
   icon_script+=$'#!/usr/bin/env bash\n'
   icon_script+=$'set -Eeuo pipefail\n'
-  icon_script+=$"exec env WOW_GAME_DIR='$TLD_WOW_GAME_DIR' WOW_OVERLAY_ROOT=/home/tld/wow-tests/desktop-wow-overlay WOW_WINEPREFIX=/home/tld/wow-tests/desktop-wow-prefix /usr/local/bin/wow-launcher\n"
+  icon_script+=$"exec /usr/local/bin/wine-exe '$TLD_WOW_GAME_DIR/Wow.exe'\n"
   icon_script+=$'SH\n'
   icon_script+=$'chmod 0755 /home/tld/wow-desktop.sh\n'
   icon_script+=$'cat > /home/tld/Desktop/World\ of\ Warcraft.desktop <<\'DESKTOP\'\n'
@@ -121,7 +121,7 @@ _tld_wow_guest_icon() {
   icon_script+=$'Version=1.0\n'
   icon_script+=$'Type=Application\n'
   icon_script+=$'Name=World of Warcraft\n'
-  icon_script+=$'Comment=Wrath of the Lich King 3.3.5a\n'
+  icon_script+=$'Comment=Wrath of the Lich King 3.3.5a (wined3d)\n'
   icon_script+=$'Exec=/home/tld/wow-desktop.sh\n'
   icon_script+=$'Terminal=false\n'
   icon_script+=$'Categories=Game;\n'
@@ -133,7 +133,7 @@ _tld_wow_guest_icon() {
   icon_script+=$'Version=1.0\n'
   icon_script+=$'Type=Application\n'
   icon_script+=$'Name=World of Warcraft\n'
-  icon_script+=$'Comment=Wrath of the Lich King 3.3.5a\n'
+  icon_script+=$'Comment=Wrath of the Lich King 3.3.5a (wined3d)\n'
   icon_script+=$'Exec=/home/tld/wow-desktop.sh\n'
   icon_script+=$'Icon=application-x-executable\n'
   icon_script+=$'Terminal=false\n'

@@ -148,19 +148,85 @@ install_wine_components() {
   return 0
 }
 
+# ----------------------------------------------------------- runtime libs
+# libdl is the dynamic-loading library (dlopen/dlsym/dlclose). Box64 needs
+# the unversioned libdl.so linker name to wrap dlopen for x86_64 Wine, and
+# Windows installers commonly dlopen("libdl.so") too. The .so.2 versioned
+# files ship with libc6, but the unversioned symlink only comes with
+# libc6-dev — so create it explicitly for every emulation directory.
+# VITAL: must be present before Wine/Box64 ever runs.
+configure_runtime_libs() {
+  local d
+
+  for d in \
+    /usr/lib/x86_64-linux-gnu \
+    /usr/lib/aarch64-linux-gnu \
+    /usr/lib/arm-linux-gnueabihf \
+    /usr/lib/box64-x86_64-linux-gnu; do
+    if [[ -f "$d/libdl.so.2" && ! -e "$d/libdl.so" ]]; then
+      ln -s libdl.so.2 "$d/libdl.so" || fail "cannot link $d/libdl.so"
+      log "linked $d/libdl.so -> libdl.so.2"
+    fi
+  done
+  if [[ -d /usr/lib/box86-i386-linux-gnu && -f /usr/lib/i386-linux-gnu/libdl.so.2 ]]; then
+    ln -sf /usr/lib/i386-linux-gnu/libdl.so.2 /usr/lib/box86-i386-linux-gnu/libdl.so.2 2>/dev/null || true
+    ln -sf /usr/lib/i386-linux-gnu/libdl.so.2 /usr/lib/box86-i386-linux-gnu/libdl.so 2>/dev/null || true
+    log "linked box86 i386 libdl"
+  fi
+  log "runtime libraries configured (libdl.so present for all emulation arches)"
+  return 0
+}
+
+# ------------------------------------------------- wine registry overrides
+# Bake the wined3d DLL overrides and environment into the Wine prefix so
+# every .exe launch uses builtin D3D9/DXGI (no DXVK) regardless of shell env.
+configure_wine_registry() {
+  local prefix="${TLD_WINE_PREFIX:-/home/$GUEST_USER/wine-runtime-prefix}"
+  local box64_bin="${TLD_BOX64_BIN:-/usr/local/bin/box64}"
+  local wine_bin="$WINE_INSTALL_DIR/$WINE_TREE_NAME/bin/wine"
+  local dll
+
+  [[ -x "$wine_bin" ]] || return 0
+  [[ -d "$prefix" ]] || return 0
+
+  for dll in d3d9 d3d10core d3d11 dxgi ddraw dinput8; do
+    env WINEPREFIX="$prefix" DISPLAY="${DISPLAY:-:0}" WINEDEBUG=-all \
+      "$box64_bin" "$wine_bin" reg add "HKCU\\Software\\Wine\\DllOverrides\\$dll" /v "" /d builtin /f >/dev/null 2>&1 || true
+  done
+  for dll in winemac.drv winewayland.drv; do
+    env WINEPREFIX="$prefix" DISPLAY="${DISPLAY:-:0}" WINEDEBUG=-all \
+      "$box64_bin" "$wine_bin" reg add "HKCU\\Software\\Wine\\DllOverrides\\$dll" /v "" /d disabled /f >/dev/null 2>&1 || true
+  done
+  env WINEPREFIX="$prefix" DISPLAY="${DISPLAY:-:0}" WINEDEBUG=-all \
+    "$box64_bin" "$wine_bin" reg add "HKCU\\Environment" /v TEMP /d "C:\\users\\$GUEST_USER\\AppData\\Local\\Temp" /f >/dev/null 2>&1 || true
+  env WINEPREFIX="$prefix" DISPLAY="${DISPLAY:-:0}" WINEDEBUG=-all \
+    "$box64_bin" "$wine_bin" reg add "HKCU\\Environment" /v TMP /d "C:\\users\\$GUEST_USER\\AppData\\Local\\Temp" /f >/dev/null 2>&1 || true
+  env WINEPREFIX="$prefix" DISPLAY="${DISPLAY:-:0}" WINEDEBUG=-all \
+    "$box64_bin" "$wine_bin" reg add "HKCU\\Environment" /v DISPLAY /d ":0" /f >/dev/null 2>&1 || true
+  env WINEPREFIX="$prefix" DISPLAY="${DISPLAY:-:0}" WINEDEBUG=-all \
+    "$box64_bin" "$wine_bin" reg add "HKCU\\Environment" /v PULSE_SERVER /d "tcp:127.0.0.1:4713" /f >/dev/null 2>&1 || true
+  log "wine registry configured: wined3d builtin overrides + environment"
+  return 0
+}
+
 # -------------------------------------------------------------------- dxvk
+# wined3d (Wine's built-in D3D) is the default renderer and is required by
+# the wine-exe launcher. DXVK is opt-in (TLD_ENABLE_DXVK=1) and never
+# overwrites the wine builtins: the builtins are kept in place and DXVK is
+# installed alongside, so wine-exe (builtin d3d9) keeps working.
 install_dxvk() {
   local version="${TLD_DXVK_VERSION:-2.6.1}"
   local archive="$RUNTIME_CACHE/dxvk-$version.tar.gz"
   local wine_windows="$WINE_INSTALL_DIR/$WINE_TREE_NAME/lib/wine/x86_64-windows"
   local extract_dir="/tmp/dxvk-extract"
+  local dll
+
+  [[ "${TLD_ENABLE_DXVK:-0}" == 1 ]] || {
+    log "dxvk skipped (wined3d is the default renderer; set TLD_ENABLE_DXVK=1 to opt in)"
+    return 0
+  }
 
   [[ -d "$wine_windows" ]] || fail "wine tree missing x86_64-windows: $wine_windows"
-  if has_file "$wine_windows/d3d9.dll" && [[ ! -f "$wine_windows/d3d9.dll.toolkit-backup" ]]; then
-    cp -p "$wine_windows/d3d9.dll" "$wine_windows/d3d9.dll.toolkit-backup"
-    cp -p "$wine_windows/dxgi.dll" "$wine_windows/dxgi.dll.toolkit-backup"
-    cp -p "$wine_windows/d3d11.dll" "$wine_windows/d3d11.dll.toolkit-backup"
-  fi
   has_file "$archive" || fail "dxvk archive missing from cache: $archive"
   rm -rf "$extract_dir"
   mkdir -p "$extract_dir"
@@ -168,8 +234,10 @@ install_dxvk() {
   local dll_dir="$extract_dir/dxvk-$version/x64"
   [[ -d "$dll_dir" ]] || dll_dir="$extract_dir/x64"
   [[ -d "$dll_dir" ]] || fail "dxvk archive has no x64 dll directory"
-  install -m 0644 "$dll_dir/d3d9.dll" "$dll_dir/dxgi.dll" "$dll_dir/d3d11.dll" "$wine_windows/" || fail "dxvk install"
-  log "dxvk $version installed"
+  for dll in d3d9 dxgi d3d11; do
+    install -m 0644 "$dll_dir/$dll.dll" "$wine_windows/$dll.dll.dxvk" || fail "dxvk install $dll"
+  done
+  log "dxvk $version installed alongside wine builtins (opt-in: wine-exe still uses wined3d)"
   return 0
 }
 
@@ -702,6 +770,114 @@ EOF
   return 0
 }
 
+# --------------------------------------------------------- wine-exe
+write_wine_exe_launcher() {
+  local guest_home="/home/$GUEST_USER"
+  local game_dir="/data/data/com.termux/files/home/WoW 3.3.5a"
+  local desktop_dir="$guest_home/Desktop"
+  local apps_dir="$guest_home/.local/share/applications"
+
+  mkdir -p /usr/local/bin "$desktop_dir" "$apps_dir"
+
+  cat > /usr/local/bin/wine-exe <<'EOF'
+#!/usr/bin/env bash
+# Generic per-EXE launcher: runs ANY Windows .exe through Box64 + Wine (wined3d).
+# Usage: wine-exe /path/to/Game.exe [args...]
+set -Eeuo pipefail
+
+WOW_GAME_DIR="${WOW_GAME_DIR:-/data/data/com.termux/files/home/WoW 3.3.5a}"
+BOX64_BIN="${BOX64_BIN:-/usr/local/bin/box64}"
+WINE_BIN="${WINE_BIN:-/opt/wine-runtime/wine-11.11-amd64-wow64/bin/wine}"
+WINEPREFIX_DEFAULT="${WINEPREFIX_DEFAULT:-/home/tld/wow-tests/desktop-wow-prefix}"
+
+if [[ $# -lt 1 ]]; then
+  echo "usage: wine-exe <path-to-exe> [args...]" >&2
+  exit 1
+fi
+EXE_PATH="${1-}"
+shift
+
+if [[ "$EXE_PATH" != /* && -f "$WOW_GAME_DIR/$EXE_PATH" ]]; then
+  EXE_PATH="$WOW_GAME_DIR/$EXE_PATH"
+fi
+[[ -f "$EXE_PATH" ]] || { echo "executable not found: $EXE_PATH" >&2; exit 1; }
+[[ -x "$BOX64_BIN" ]] || { echo "box64 not found: $BOX64_BIN" >&2; exit 1; }
+[[ -x "$WINE_BIN" ]] || { echo "wine not found: $WINE_BIN" >&2; exit 1; }
+
+export WINEPREFIX="${WINEPREFIX:-$WINEPREFIX_DEFAULT}"
+export DISPLAY="${DISPLAY:-:0}"
+export XAUTHORITY="${XAUTHORITY:-$HOME/.Xauthority}"
+export PULSE_SERVER="${PULSE_SERVER:-tcp:127.0.0.1:4713}"
+export PULSE_SINK="${PULSE_SINK:-AAudio_sink}"
+export PULSE_LATENCY_MSEC=60
+
+# wined3d: builtin D3D9/DXGI, software GL (llvmpipe) so no DRI3 is needed.
+export LIBGL_ALWAYS_SOFTWARE=1
+export GALLIUM_DRIVER=llvmpipe
+export WINEDLLOVERRIDES="${WINEDLLOVERRIDES:-d3d9=b,d3d10core=b,d3d11=b,dxgi=b,ddraw=b,winemac.drv=d,winewayland.drv=d}"
+export WINEESYNC=0
+export WINEFSYNC=0
+export WINEDEBUG="${WINEDEBUG:--all}"
+
+cd "$(dirname "$EXE_PATH")"
+exec ionice -c 2 -n 0 "$BOX64_BIN" "$WINE_BIN" "$EXE_PATH" "$@"
+EOF
+  chmod 0755 /usr/local/bin/wine-exe
+
+  cat > "$apps_dir/wine-exe.desktop" <<'EOF'
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Wine (wined3d)
+GenericName=Windows executable
+Comment=Run a Windows .exe through Box64 + Wine (wined3d)
+Exec=/usr/local/bin/wine-exe %f
+Icon=applications-games
+Terminal=false
+Categories=Utility;Game;
+MimeType=application/x-ms-dos-executable;application/x-msdownload;application/exe;application/x-msi;
+NoDisplay=false
+EOF
+  chmod 0644 "$apps_dir/wine-exe.desktop"
+
+  if [[ -f "$guest_home/.config/mimeapps.list" ]]; then
+    sed -i '/^application\/x-ms-dos-executable=/d;/^application\/x-msdownload=/d' "$guest_home/.config/mimeapps.list"
+  fi
+  cat >> "$guest_home/.config/mimeapps.list" <<'EOF'
+[Default Applications]
+application/x-ms-dos-executable=wine-exe.desktop
+application/x-msdownload=wine-exe.desktop
+application/exe=wine-exe.desktop
+application/x-msi=wine-exe.desktop
+EOF
+
+  write_shortcut() {
+    local name="$1" exe="$2" comment="$3"
+    cat > "$desktop_dir/$name.desktop" <<EOFS
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=$name
+Comment=$comment
+Exec=/usr/local/bin/wine-exe "$game_dir/$exe"
+Icon=applications-games
+Terminal=false
+Categories=Game;Utility;
+StartupNotify=true
+EOFS
+    chmod 0755 "$desktop_dir/$name.desktop"
+    cp "$desktop_dir/$name.desktop" "$apps_dir/$name.desktop"
+  }
+
+  write_shortcut "World of Warcraft" "Wow.exe" "Launch WoW through Wine (wined3d)"
+  write_shortcut "WoW Repair" "Repair.exe" "WoW repair utility (wined3d)"
+  write_shortcut "WoW Error" "WowError.exe" "WoW error reporter (wined3d)"
+
+  chown -R "$GUEST_USER:$GUEST_USER" "$desktop_dir" "$apps_dir" "$guest_home/.config/mimeapps.list" 2>/dev/null || true
+  log "wine-exe launcher, .exe association, and WoW shortcuts written"
+  return 0
+}
+
 # ------------------------------------------------------------------ vncpass
 setup_vnc_password() {
   if [[ ! -f "/home/$GUEST_USER/.vncpasswd" ]]; then
@@ -715,7 +891,7 @@ setup_vnc_password() {
 # ------------------------------------------------------------------- main
 main() {
   local component skip_var
-  for component in packages box64 turnip wine wine_components dxvk firefox diag configs locale shortcuts vncpass; do
+  for component in packages box64 turnip wine wine_components runtime-libs dxvk firefox diag configs locale wine-registry wine-exe shortcuts vncpass; do
     skip_var="TLD_SKIP_$component"
     if [[ -n "${!skip_var:-}" ]]; then
       log "skipping $component"
@@ -733,11 +909,14 @@ main() {
           install_wine_components
         fi
         ;;
+      runtime-libs) configure_runtime_libs ;;
       dxvk)     install_dxvk ;;
       firefox)  install_firefox ;;
       diag)     install_diag_apps ;;
       configs)  write_runtime_configs ;;
       locale)   configure_locale ;;
+      wine-registry) configure_wine_registry ;;
+      wine-exe) write_wine_exe_launcher ;;
       shortcuts) write_desktop_shortcuts ;;
       vncpass)  setup_vnc_password ;;
     esac || fail "$component"

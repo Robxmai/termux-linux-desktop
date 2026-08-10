@@ -241,3 +241,59 @@ told to run any other script to bring up the desktop.
   `LANG=C.UTF-8` and `LC_ALL=C.UTF-8`.
 - OpenCode and other TUIs render box-drawing characters and CJK correctly.
 
+---
+
+## 12. VITAL: libdl.so must exist for every emulation architecture
+
+### What it is
+
+`libdl` is the dynamic-loading library (`dlopen` / `dlsym` / `dlclose`).
+Box64 wraps `dlopen` for x86_64 Wine, and Windows installers
+(e.g. `lark.exe`) commonly load `libdl.so` by its **unversioned** linker
+name. `libc6` ships only `libdl.so.2`; the `libdl.so` symlink normally comes
+from `libc6-dev` and is easy to miss.
+
+### The failure mode
+
+- `box64` logs `Cannot find libdl.so` (or the loader reports
+  `error while loading shared libraries: libdl.so`) the first time a program
+  calls `dlopen`.
+- Missing emulation libraries are a common cause of "black screen" or
+  instant-exit launches: Wine loads, but the emulated loader cannot resolve
+  the libraries it needs, so the process dies before creating a window.
+
+### Fix (installed by the `runtime-libs` provision stage)
+
+```bash
+ln -s libdl.so.2 /usr/lib/x86_64-linux-gnu/libdl.so
+ln -s libdl.so.2 /usr/lib/aarch64-linux-gnu/libdl.so
+ln -s libdl.so.2 /usr/lib/arm-linux-gnueabihf/libdl.so
+ln -s libdl.so.2 /usr/lib/box64-x86_64-linux-gnu/libdl.so
+```
+
+Verification: `BOX64_LOG=1 box64 .../bin/wine --version` prints
+`Using native(wrapped) libdl.so.2`.
+
+## 13. Wine registry: wined3d overrides and environment
+
+The `wine-registry` provision stage bakes the following into
+`HKCU\Software\Wine\DllOverrides` so **every** .exe launch uses wined3d
+(Wine builtin D3D), matching the Winlator "no DXVK" profile:
+
+- `d3d9`, `d3d10core`, `d3d11`, `dxgi`, `ddraw`, `dinput8` = `builtin`
+- `winemac.drv`, `winewayland.drv` = `disabled`
+
+And into `HKCU\Environment`:
+
+- `TEMP` / `TMP` = `C:\users\<guest user>\AppData\Local\Temp`
+- `DISPLAY` = `:0`
+- `PULSE_SERVER` = `tcp:127.0.0.1:4713`
+
+Check with:
+
+```bash
+box64 .../bin/wine reg query "HKCU\Software\Wine\DllOverrides"
+box64 .../bin/wine reg query "HKCU\Environment"
+```
+
+
