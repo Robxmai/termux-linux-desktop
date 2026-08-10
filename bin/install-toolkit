@@ -101,7 +101,7 @@ _tld_stage_allowed_file() {
     bin/*)
       return 0
       ;;
-    lib/tld-*.sh|profiles/base.env|rootfs/ubuntu-24.04.env|docs/*.md|docs/*.txt)
+    lib/tld-*.sh|profiles/base.env|rootfs/*.env|rootfs/box86.list|rootfs/guest-runtime-provision.sh|docs/*.md|docs/*.txt)
       return 0
       ;;
     *)
