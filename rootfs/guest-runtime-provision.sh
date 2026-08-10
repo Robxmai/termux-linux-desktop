@@ -843,7 +843,7 @@ set -Eeuo pipefail
 WOW_GAME_DIR="${WOW_GAME_DIR:-/data/data/com.termux/files/home/WoW 3.3.5a}"
 BOX64_BIN="${BOX64_BIN:-/usr/local/bin/box64}"
 WINE_BIN="${WINE_BIN:-/opt/wine-runtime/wine-11.11-amd64-wow64/bin/wine}"
-WINEPREFIX_DEFAULT="${WINEPREFIX_DEFAULT:-/root/wow-tests/desktop-wow-prefix}"
+WINEPREFIX_DEFAULT="${WINEPREFIX_DEFAULT:-/root/wine-runtime-prefix}"
 
 if [[ $# -lt 1 ]]; then
   echo "usage: wine-exe <path-to-exe> [args...]" >&2
