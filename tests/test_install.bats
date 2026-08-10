@@ -67,9 +67,8 @@ setup() {
     '    exit "${TLD_TEST_INSTALL_STATUS:-0}"' \
     '    ;;' \
     '  login)' \
-    '    mkdir -p "${TLD_TEST_ROOTFS_DIR:?}/usr/local/lib/termux-linux-desktop"' \
-    '    printf "%s\\n" "#!/usr/bin/env bash" > "${TLD_TEST_ROOTFS_DIR:?}/usr/local/lib/termux-linux-desktop/start-guest.sh"' \
-    '    chmod +x "${TLD_TEST_ROOTFS_DIR:?}/usr/local/lib/termux-linux-desktop/start-guest.sh"' \
+    '    mkdir -p "${TLD_TEST_ROOTFS_DIR:?}/etc/profile.d"' \
+    '    printf "%s\\n" "export LANG=C.UTF-8" > "${TLD_TEST_ROOTFS_DIR:?}/etc/profile.d/01-locale-fix.sh"' \
     '    exit "${TLD_TEST_LOGIN_STATUS:-0}"' \
     '    ;;' \
     'esac' \
@@ -299,9 +298,9 @@ write_owner_sentinel() {
 
   [ "$status" -eq 0 ]
   mapfile -t stages < "$TLD_TEST_STAGE_LOG"
-  [ "${stages[*]}" = 'preflight package rootfs-install guest-provision launcher-copy base-profile manifest-commit doctor' ]
+  [ "${stages[*]}" = 'preflight package rootfs-install guest-provision base-profile manifest-commit doctor' ]
   mapfile -t call_stages < <(sed -n 's/^stage //p' "$TLD_TEST_CALL_LOG")
-  [ "${call_stages[*]}" = 'preflight package rootfs-install guest-provision launcher-copy base-profile manifest-commit doctor' ]
+  [ "${call_stages[*]}" = 'preflight package rootfs-install guest-provision base-profile manifest-commit doctor' ]
   [ -f "$PREFIX/opt/termux-linux-desktop/profiles/base.env" ]
   [ -L "$PREFIX/bin/desktop-doctor" ]
 }
@@ -518,26 +517,26 @@ write_owner_sentinel() {
 
   [ "$status" -eq 0 ]
   [[ "$output" == *'PASS runtime manifest'* ]]
-  [[ "$output" == *'PASS guest launcher'* ]]
+  [[ "$output" == *'PASS guest locale'* ]]
   [[ "$output" == *'PASS runtime manifest rootfs SHA-256='* ]]
   [[ "$output" == *'WARN GPU/Wine checks skipped in install mode'* ]]
   [[ "$output" != *'FAIL GPU'* ]]
   [[ "$output" != *'FAIL Wine'* ]]
 }
 
-@test "desktop-doctor install mode fails for a missing guest launcher" {
+@test "desktop-doctor install mode fails for a missing guest locale" {
   run_toolkit_install
   [ "$status" -eq 0 ]
   prepare_desktop_test
 
   run bash "$PREFIX/bin/desktop-install"
   [ "$status" -eq 0 ]
-  rm -f -- "$TLD_TEST_ROOTFS_DIR/usr/local/lib/termux-linux-desktop/start-guest.sh"
+  rm -f -- "$TLD_TEST_ROOTFS_DIR/etc/profile.d/01-locale-fix.sh"
 
   run bash "$PREFIX/bin/desktop-doctor" --install-mode
 
   [ "$status" -ne 0 ]
-  [[ "$output" == *'FAIL guest launcher'* ]]
+  [[ "$output" == *'FAIL guest locale'* ]]
 }
 
 @test "desktop-doctor rejects an omitted required manifest field" {

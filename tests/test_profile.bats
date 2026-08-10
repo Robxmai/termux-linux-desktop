@@ -29,10 +29,9 @@ setup() {
   export TLD_TEST_ROOTFS_DIR="$PREFIX/var/lib/proot-distro/containers/tld-ubuntu/rootfs"
   export TLD_TEST_MANIFEST_FILE="$PREFIX/var/lib/proot-distro/containers/tld-ubuntu/manifest.json"
   export TLD_ROOTFS_ENV_FILE="$TLD_TEST_ROOT/ubuntu.env"
-  mkdir -p "$TLD_TEST_ROOTFS_DIR/usr/local/lib/termux-linux-desktop"
+  mkdir -p "$TLD_TEST_ROOTFS_DIR/usr/local/lib/termux-linux-desktop" "$TLD_TEST_ROOTFS_DIR/etc/profile.d"
   printf '%s\n' '{"architecture":"arm64"}' > "$TLD_TEST_MANIFEST_FILE"
-  printf '%s\n' '#!/usr/bin/env bash' > "$TLD_TEST_ROOTFS_DIR/usr/local/lib/termux-linux-desktop/start-guest.sh"
-  chmod +x "$TLD_TEST_ROOTFS_DIR/usr/local/lib/termux-linux-desktop/start-guest.sh"
+  printf '%s\n' 'export LANG=C.UTF-8' 'export LC_ALL=C.UTF-8' > "$TLD_TEST_ROOTFS_DIR/etc/profile.d/01-locale-fix.sh"
   printf '%s\n' \
     "TLD_ROOTFS_IMAGE='ubuntu:24.04'" \
     "TLD_ROOTFS_CONTAINER='tld-ubuntu'" \
@@ -103,6 +102,8 @@ _tld_write_manifest() {
     'rootfs_image=ubuntu:24.04' \
     'rootfs_container=tld-ubuntu' \
     'profile=base' \
+    'profile_version=2' \
+    'runtime=wine-11.11-amd64-wow64' \
     "rootfs_manifest_sha256=$("$TLD_REAL_SHA256SUM" "$TLD_TEST_MANIFEST_FILE" | awk '{print $1}')" \
     > "$TLD_INSTANCE_FILE"
 }
@@ -290,8 +291,8 @@ PY
   : > "$TLD_TEST_ROOT/audio-ready"
   export TLD_TEST_KILL_REMOVES=1
   mkdir -p "$TLD_PROC_ROOT/5252"
-  printf '5252 (start-guest.sh) R 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 9999\n' > "$TLD_PROC_ROOT/5252/stat"
-  printf '/usr/bin/start-guest.sh\0--flag\0' > "$TLD_PROC_ROOT/5252/cmdline"
+  printf '5252 (dbus-run-session) R 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 9999\n' > "$TLD_PROC_ROOT/5252/stat"
+  printf '/usr/bin/dbus-run-session\0--flag\0' > "$TLD_PROC_ROOT/5252/cmdline"
   hash=$(tr '\0' '\n' < "$TLD_PROC_ROOT/5252/cmdline" | sha256sum | awk '{print $1}')
   mkdir -p "$TLD_STATE_DIR/processes"
   printf 'ROLE=desktop\nPID=5252\nSTART_TICKS=9999\nCOMMAND_HASH=%s\n' "$hash" > "$TLD_STATE_DIR/processes/desktop.env"

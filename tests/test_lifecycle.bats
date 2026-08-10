@@ -36,8 +36,6 @@ setup() {
   export TLD_TEST_MANIFEST_FILE="$PREFIX/var/lib/proot-distro/containers/tld-ubuntu/manifest.json"
   mkdir -p "$TLD_TEST_ROOTFS_DIR/usr/local/lib/termux-linux-desktop"
   printf '%s\n' '{"architecture":"arm64"}' > "$TLD_TEST_MANIFEST_FILE"
-  printf '%s\n' '#!/usr/bin/env bash' > "$TLD_TEST_ROOTFS_DIR/usr/local/lib/termux-linux-desktop/start-guest.sh"
-  chmod +x "$TLD_TEST_ROOTFS_DIR/usr/local/lib/termux-linux-desktop/start-guest.sh"
 
   printf '%s\n' \
     '#!/usr/bin/env bash' \
@@ -199,13 +197,15 @@ PY
   _tld_make_x11_socket
   : > "$TLD_TEST_ROOT/audio-ready"
   : > "$TLD_TEST_ROOT/xfce-ready"
-  _tld_make_proc_entry "$TLD_TEST_GUEST_PID" "$TLD_TEST_GUEST_TICKS" start-guest.sh
+  _tld_make_proc_entry "$TLD_TEST_GUEST_PID" "$TLD_TEST_GUEST_TICKS" dbus-run-session
 
   run bash "$BATS_TEST_DIRNAME/../bin/desktop-start"
 
   [ "$status" -eq 0 ]
   [[ "$output" == *"XFCE components detected"* ]]
-  grep -q '^proot-distro login tld-ubuntu --user tld --shared-tmp --shared-x11 --detach -- /usr/local/lib/termux-linux-desktop/start-guest.sh$' "$TLD_TEST_CALL_LOG"
+  grep -q '^proot-distro login tld-ubuntu --user tld --shared-tmp --shared-x11 --detach -- bash -c export DISPLAY' "$TLD_TEST_CALL_LOG"
+  grep -q 'exec dbus-run-session -- startxfce4' "$TLD_TEST_CALL_LOG"
+  grep -q 'export LANG=C.UTF-8' "$TLD_TEST_CALL_LOG"
   [ -f "$TLD_STATE_DIR/processes/desktop.env" ]
   grep -q '^result=success$' "$TLD_STATE_DIR/start.result"
 }
@@ -215,7 +215,7 @@ PY
   _tld_make_x11_socket
   : > "$TLD_TEST_ROOT/audio-ready"
   : > "$TLD_TEST_ROOT/xfce-ready"
-  _tld_make_proc_entry "$TLD_TEST_GUEST_PID" "$TLD_TEST_GUEST_TICKS" start-guest.sh
+  _tld_make_proc_entry "$TLD_TEST_GUEST_PID" "$TLD_TEST_GUEST_TICKS" dbus-run-session
   _tld_record_desktop
 
   run bash "$BATS_TEST_DIRNAME/../bin/desktop-start"
@@ -229,7 +229,7 @@ PY
   printf 'created_at=2026-08-03T00:00:00Z\n' > "$TLD_INSTANCE_FILE"
   _tld_make_x11_socket
   : > "$TLD_TEST_ROOT/audio-ready"
-  _tld_make_proc_entry "$TLD_TEST_GUEST_PID" "$TLD_TEST_GUEST_TICKS" start-guest.sh
+  _tld_make_proc_entry "$TLD_TEST_GUEST_PID" "$TLD_TEST_GUEST_TICKS" dbus-run-session
   _tld_record_desktop
 
   run bash "$BATS_TEST_DIRNAME/../bin/desktop-status"
@@ -260,7 +260,7 @@ PY
   printf 'manifest=1\n' > "$TLD_INSTANCE_FILE"
   : > "$TLD_TEST_ROOT/audio-ready"
   printf 'AUDIO_OWNER=external\n' > "$TLD_STATE_DIR/audio-owner.env"
-  _tld_make_proc_entry "$TLD_TEST_GUEST_PID" "$TLD_TEST_GUEST_TICKS" start-guest.sh
+  _tld_make_proc_entry "$TLD_TEST_GUEST_PID" "$TLD_TEST_GUEST_TICKS" dbus-run-session
   _tld_record_desktop
   export TLD_TEST_KILL_REMOVES=1
 
@@ -290,7 +290,7 @@ PY
   printf 'manifest=1\n' > "$TLD_INSTANCE_FILE"
   : > "$TLD_TEST_ROOT/audio-ready"
   printf 'AUDIO_OWNER=external\n' > "$TLD_STATE_DIR/audio-owner.env"
-  _tld_make_proc_entry "$TLD_TEST_GUEST_PID" "$TLD_TEST_GUEST_TICKS" start-guest.sh
+  _tld_make_proc_entry "$TLD_TEST_GUEST_PID" "$TLD_TEST_GUEST_TICKS" dbus-run-session
   _tld_record_desktop
   export TLD_TEST_PROOT_KILL_STATUS=1
 

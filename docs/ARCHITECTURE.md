@@ -38,14 +38,22 @@ provisioned with XFCE, D-Bus, Thunar, a terminal, and diagnostics, and runs
 with a non-privileged desktop user named `tld`. Guest root operations are
 limited to installation and provisioning and are not Android root.
 
-The guest launcher lives at:
+`start-gladio-desktop.sh` is the only launcher for the desktop. It delegates
+to `desktop-start`, which starts the guest session inline (no separate guest
+launcher script):
 
 ```text
-/usr/local/lib/termux-linux-desktop/start-guest.sh
+proot-distro login ... --detach -- bash -c 'export DISPLAY=:0
+export PULSE_SERVER=tcp:127.0.0.1:4713
+export LANG=C.UTF-8
+export LC_ALL=C.UTF-8
+exec dbus-run-session -- startxfce4'
 ```
 
-It starts `dbus-run-session -- startxfce4` with the display and PulseAudio
-endpoint provided by the host.
+The session always runs with the `C.UTF-8` locale so terminals and TUI
+applications render Unicode instead of `?`. The same locale is written to
+`/etc/profile.d/01-locale-fix.sh` and the desktop user's shell files by the
+`locale` provisioning stage.
 
 ## Display and audio
 

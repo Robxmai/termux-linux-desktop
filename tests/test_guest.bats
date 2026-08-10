@@ -228,29 +228,6 @@ test_manifest_sha256() {
   [[ "$(<"$TLD_LOG_DIR/guest.log")" == *guest-stderr* ]]
 }
 
-@test "tld_guest_copy_launcher generates the required guest launcher" {
-  run tld_guest_copy_launcher
-
-  [ "$status" -eq 0 ]
-  guest_command="$(<"$TLD_TEST_GUEST_COMMAND")"
-  [[ "$guest_command" == *'target_dir=/usr/local/lib/termux-linux-desktop'* ]]
-  [[ "$guest_command" == *'install -d -m 0755 "$target_dir"'* ]]
-  [[ "$guest_command" == *'if ! cat > "$temporary"'* ]]
-  [[ "$guest_command" == *'[[ ! -s "$temporary" ]]'* ]]
-  [[ "$guest_command" == *'install -m 0755 "$temporary" "$copy_target"'* ]]
-  [[ "$guest_command" == *'mv -f -- "$copy_target" "$target"'* ]]
-  [[ "$guest_command" == *'target="$target_dir/start-guest.sh"'* ]]
-  [[ "$guest_command" == *'#!/usr/bin/env bash'* ]]
-  [[ "$guest_command" == *'export DISPLAY=${DISPLAY:-:0}'* ]]
-  [[ "$guest_command" == *'export PULSE_SERVER=${PULSE_SERVER:-tcp:127.0.0.1:4713}'* ]]
-  [[ "$guest_command" == *'command -v dbus-run-session'* ]]
-  [[ "$guest_command" == *'command -v startxfce4'* ]]
-  [[ "$guest_command" == *'command -v xfce4-session'* ]]
-  [[ "$guest_command" == *'exec dbus-run-session -- startxfce4'* ]]
-  [[ "$guest_command" != *'TLD_TEST'* ]]
-  [[ "$guest_command" != *"$TLD_TEST_BIN"* ]]
-}
-
 @test "tld_guest_install_rootfs rejects a proot-distro version below the floor before install" {
   export TLD_TEST_PROOT_VERSION=5.4.9
 
@@ -357,76 +334,8 @@ test_manifest_sha256() {
   [ "$status" -ne 0 ]
 }
 
-@test "tld_guest_copy_launcher rejects failed host launcher content reads" {
-  printf '%s\n' '#!/usr/bin/env bash' 'exit 41' > "$TLD_TEST_BIN/cat"
-  chmod +x "$TLD_TEST_BIN/cat"
-
-  run tld_guest_copy_launcher
-  rm -f -- "$TLD_TEST_BIN/cat"
-
-  [ "$status" -eq 41 ]
-  ! grep -F 'proot-distro login' "$TLD_TEST_CALL_LOG"
-}
-
-@test "tld_guest_copy_launcher rejects an empty generated launcher" {
-  printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$TLD_TEST_BIN/cat"
-  chmod +x "$TLD_TEST_BIN/cat"
-
-  run tld_guest_copy_launcher
-  rm -f -- "$TLD_TEST_BIN/cat"
-
-  [ "$status" -ne 0 ]
-  ! grep -F 'proot-distro login' "$TLD_TEST_CALL_LOG"
-}
-
-@test "guest launcher cat failure leaves the active launcher unchanged" {
-  launcher_dir="$TLD_TEST_ROOT/launcher-root"
-  launcher_path="$launcher_dir/start-guest.sh"
-  mkdir -p "$launcher_dir"
-  printf '%s\n' old-launcher > "$launcher_path"
-  tld_guest_copy_launcher
-  guest_command="$(<"$TLD_TEST_GUEST_COMMAND")"
-  guest_command=${guest_command//\/usr\/local\/lib\/termux-linux-desktop/$launcher_dir}
-
-  rm -f -- "$TLD_TEST_BIN/install"
-  printf '%s\n' '#!/usr/bin/env bash' 'exit 41' > "$TLD_TEST_BIN/cat"
-  chmod +x "$TLD_TEST_BIN/cat"
-  run bash -c "$guest_command"
-  rm -f -- "$TLD_TEST_BIN/cat"
-
-  [ "$status" -ne 0 ]
-  [ "$(<"$launcher_path")" = old-launcher ]
-}
-
-@test "empty guest launcher cat leaves the active launcher unchanged" {
-  launcher_dir="$TLD_TEST_ROOT/launcher-root"
-  launcher_path="$launcher_dir/start-guest.sh"
-  mkdir -p "$launcher_dir"
-  printf '%s\n' old-launcher > "$launcher_path"
-  tld_guest_copy_launcher
-  guest_command="$(<"$TLD_TEST_GUEST_COMMAND")"
-  guest_command=${guest_command//\/usr\/local\/lib\/termux-linux-desktop/$launcher_dir}
-
-  rm -f -- "$TLD_TEST_BIN/install"
-  printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$TLD_TEST_BIN/cat"
-  chmod +x "$TLD_TEST_BIN/cat"
-  run bash -c "$guest_command"
-  rm -f -- "$TLD_TEST_BIN/cat"
-
-  [ "$status" -ne 0 ]
-  [ "$(<"$launcher_path")" = old-launcher ]
-}
-
-@test "tld_guest_copy_launcher propagates guest copy failures" {
-  export TLD_TEST_LOGIN_STATUS=19
-
-  run tld_guest_copy_launcher
-
-  [ "$status" -eq 19 ]
-}
-
 @test "guest functions run under strict mode" {
-  run bash -c 'set -Eeuo pipefail; source "$TLD_LIB_DIR/tld-common.sh"; source "$TLD_LIB_DIR/tld-guest.sh"; tld_guest_install_rootfs; tld_guest_provision; tld_guest_copy_launcher'
+  run bash -c 'set -Eeuo pipefail; source "$TLD_LIB_DIR/tld-common.sh"; source "$TLD_LIB_DIR/tld-guest.sh"; tld_guest_install_rootfs; tld_guest_provision'
 
   [ "$status" -eq 0 ]
 }

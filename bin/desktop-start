@@ -97,11 +97,18 @@ _tld_start_launch_guest() {
   local pid command_hash attempts=0
 
   if ! proot-distro login "$TLD_GUEST_CONTAINER" --user "$TLD_GUEST_USER" --shared-tmp --shared-x11 --detach -- \
-    /usr/local/lib/termux-linux-desktop/start-guest.sh >> "$TLD_LOG_DIR/guest.log" 2>&1; then
+    bash -c 'export DISPLAY=${DISPLAY:-:0}
+export PULSE_SERVER=${PULSE_SERVER:-tcp:127.0.0.1:4713}
+export LANG=C.UTF-8
+export LC_ALL=C.UTF-8
+command -v dbus-run-session >/dev/null 2>&1 || exit 1
+command -v startxfce4 >/dev/null 2>&1 || exit 1
+command -v xfce4-session >/dev/null 2>&1 || exit 1
+exec dbus-run-session -- startxfce4' >> "$TLD_LOG_DIR/guest.log" 2>&1; then
     return 1
   fi
   while (( attempts < 20 )); do
-    pid=$(pgrep -f 'start-guest\.sh' | head -n 1) || true
+    pid=$(pgrep -f 'dbus-run-session -- startxfce4' | head -n 1) || true
     if [[ "$pid" =~ ^[1-9][0-9]*$ ]]; then
       break
     fi

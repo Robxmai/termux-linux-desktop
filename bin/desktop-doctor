@@ -78,11 +78,13 @@ _tld_doctor_manifest_valid() {
     rootfs_image
     rootfs_container
     profile
+    profile_version
+    runtime
     rootfs_manifest_sha256
   )
   local actual_hash
 
-  unset action manifest_version toolkit_version created_at status architecture profile rootfs_image rootfs_container rootfs_manifest_sha256
+  unset action manifest_version toolkit_version created_at status architecture profile profile_version rootfs_image rootfs_container runtime rootfs_manifest_sha256
   if [[ -L "${TLD_INSTANCE_FILE:-}" || ! -f "${TLD_INSTANCE_FILE:-}" ]]; then
     _tld_doctor_fail "runtime manifest is missing or is not a regular file: ${TLD_INSTANCE_FILE:-unset}"
     return 1
@@ -94,8 +96,10 @@ _tld_doctor_manifest_valid() {
       "${status-}" != installed ||
       "${architecture-}" != aarch64 ||
       "${profile-}" != base ||
+      "${profile_version-}" != 2 ||
       "${rootfs_image-}" != ubuntu:24.04 ||
       "${rootfs_container-}" != tld-ubuntu ||
+      -z "${runtime-}" ||
       ! "${rootfs_manifest_sha256-}" =~ ^[0-9A-Fa-f]{64}$ ]] ||
     ! _tld_doctor_valid_created_at "${created_at-}"; then
     _tld_doctor_fail 'runtime manifest is missing required installed base values'
@@ -140,19 +144,53 @@ _tld_doctor_rootfs() {
   return 1
 }
 
-_tld_doctor_guest_launcher() {
-  local rootfs_dir launcher
+_tld_doctor_guest_locale() {
+  local rootfs_dir locale_fix
 
   rootfs_dir=$(_tld_guest_rootfs_dir 2>/dev/null) || {
-    _tld_doctor_fail 'guest launcher check skipped: rootfs path unavailable'
+    _tld_doctor_fail 'guest locale check skipped: rootfs path unavailable'
     return 1
   }
-  launcher="$rootfs_dir/usr/local/lib/termux-linux-desktop/start-guest.sh"
-  if [[ -f "$launcher" && ! -L "$launcher" && -x "$launcher" ]]; then
-    printf 'PASS guest launcher=%s\n' "$launcher"
+  locale_fix="$rootfs_dir/etc/profile.d/01-locale-fix.sh"
+  if [[ -f "$locale_fix" && ! -L "$locale_fix" ]] && grep -q 'export LANG=C.UTF-8' "$locale_fix" 2>/dev/null; then
+    printf 'PASS guest locale=%s\n' "$locale_fix"
     return 0
   fi
-  _tld_doctor_fail "guest launcher is missing or not executable: $launcher"
+  _tld_doctor_fail "guest UTF-8 locale is not configured: $locale_fix"
+  return 1
+}
+
+_tld_doctor_full_desktop() {
+  local container="${TLD_ROOTFS_CONTAINER:-tld-ubuntu}"
+  local guest_user="${TLD_GUEST_USER:-tld}"
+  local wine_prefix="/home/$guest_user/wine-runtime-prefix"
+
+  if proot-distro login "$container" --user "$guest_user" --shared-tmp --shared-x11 -- \
+    env TLD_WINE_PREFIX="$wine_prefix" /bin/bash -lc '
+    set -Eeuo pipefail
+    for command_name in \
+      startxfce4 xfce4-session xfce4-panel xfdesktop xfwm4 xfce4-terminal \
+      thunar dbus-run-session libreoffice evince mpv ffmpeg firefox \
+      python3 perl node npm ruby php go rustc cargo java mono dotnet \
+      box64 box86 vulkaninfo pactl; do
+      command -v "$command_name" >/dev/null 2>&1 || {
+        printf "missing desktop runtime command: %s\\n" "$command_name" >&2
+        exit 1
+      }
+    done
+    mono --version >/dev/null
+    dotnet --list-runtimes | grep -q "^Microsoft.NETCore.App "
+    dotnet --list-runtimes | grep -q "^Microsoft.AspNetCore.App "
+    test -x /opt/wine-runtime/wine-11.11-amd64-wow64/bin/wine
+    test -d "$TLD_WINE_PREFIX/drive_c/windows/mono/mono-2.0"
+    test -f "$TLD_WINE_PREFIX/drive_c/windows/system32/gecko/2.47.4/wine_gecko/VERSION"
+    test -f "$TLD_WINE_PREFIX/drive_c/windows/syswow64/gecko/2.47.4/wine_gecko/VERSION"
+    test -x /usr/local/bin/firefox
+  '; then
+    printf 'PASS full desktop container=%s runtimes=complete\n' "$container"
+    return 0
+  fi
+  _tld_doctor_fail "full desktop/runtime check failed in container: $container"
   return 1
 }
 
@@ -176,38 +214,24 @@ _tld_doctor_audio() {
 }
 
 _tld_doctor_gpu() {
+  local container="${TLD_ROOTFS_CONTAINER:-tld-ubuntu}"
+  local guest_user="${TLD_GUEST_USER:-tld}"
   local summary device
 
-  if ! tld_require_command vulkaninfo >/dev/null 2>&1; then
-    printf '%s\n' 'WARN GPU check skipped: vulkaninfo is not installed; the base profile does not require GPU acceleration'
-    return 0
-  fi
-  if summary=$(VK_ICD_FILENAMES="${TLD_VK_ICD:-}" vulkaninfo --summary 2>/dev/null); then
+  if summary=$(proot-distro login "$container" --user "$guest_user" --shared-tmp --shared-x11 -- \
+    env DISPLAY=:0 XDG_RUNTIME_DIR=/tmp vulkaninfo --summary 2>/dev/null); then
     device=$(printf '%s\n' "$summary" | sed -n 's/^[[:space:]]*deviceName[[:space:]]*=[[:space:]]*//p' | head -n 1)
-    printf 'PASS gpu=%s\n' "${device:-unknown}"
-    return 0
+    if [[ "$summary" == *Turnip* ]]; then
+      printf 'PASS gpu=%s\n' "${device:-Turnip}"
+      return 0
+    fi
   fi
-  printf '%s\n' 'WARN GPU check skipped: vulkaninfo could not enumerate a device; the base profile does not require GPU acceleration'
-  return 0
+  _tld_doctor_fail "guest GPU check could not enumerate Turnip in container: $container"
+  return 1
 }
 
 _tld_doctor_wine() {
-  local wine_version box64_version result=0
-
-  if tld_require_command box64 >/dev/null 2>&1; then
-    box64_version=$(box64 --version 2>/dev/null | head -n 1)
-    printf 'PASS box64=%s\n' "${box64_version:-unknown}"
-  else
-    printf '%s\n' 'WARN box64 is not installed; the base profile does not require Windows compatibility'
-    result=0
-  fi
-  if tld_require_command wine >/dev/null 2>&1; then
-    wine_version=$(wine --version 2>/dev/null | head -n 1)
-    printf 'PASS wine=%s\n' "${wine_version:-unknown}"
-  else
-    printf '%s\n' 'WARN wine is not installed; the base profile does not require Windows compatibility'
-  fi
-  return "$result"
+  _tld_doctor_full_desktop
 }
 
 _tld_doctor_processes() {
@@ -295,8 +319,8 @@ if [[ "$TLD_DOCTOR_MODE" == 'install' ]]; then
     :
   fi
   _tld_doctor_rootfs || true
-  _tld_doctor_guest_launcher || true
-  printf '%s\n' 'WARN GPU/Wine checks skipped in install mode; neither is required by the base profile'
+  _tld_doctor_guest_locale || true
+  _tld_doctor_full_desktop || true
 elif (( TLD_DOCTOR_JSON == 1 )); then
   _tld_doctor_json_emit
 else
@@ -308,7 +332,7 @@ else
   fi
   _tld_doctor_manifest_valid || true
   _tld_doctor_rootfs || true
-  _tld_doctor_guest_launcher || true
+  _tld_doctor_guest_locale || true
   _tld_doctor_display || true
   _tld_doctor_audio || true
   _tld_doctor_gpu || true

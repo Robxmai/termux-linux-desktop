@@ -59,6 +59,19 @@ Wine runtime itself is provided by you:
 `desktop-install` is idempotent; the runtime components are cached under
 `$PREFIX/var/lib/termux-linux-desktop/runtime-cache`.
 
+Online installs download these Wine-managed runtime installers automatically.
+For offline installs, place these files in the runtime cache:
+
+```text
+wine-mono-11.1.0-x86.msi
+wine-gecko-2.47.4-x86.msi
+wine-gecko-2.47.4-x86_64.msi
+```
+
+They are installed into `/home/tld/wine-runtime-prefix` through Box64 and the
+pinned Wine runtime. Download them from the corresponding WineHQ release
+directories before running `desktop-install`.
+
 ## Games
 
 ```bash
@@ -78,11 +91,16 @@ desktop-vnc stop
 
 ## Start the desktop
 
+`start-gladio-desktop.sh` is the **only** launcher for the desktop. It
+handles Termux:X11, PulseAudio, and then calls `desktop-start`, which starts
+the guest XFCE session inline with the `C.UTF-8` locale (see
+`docs/TROUBLESHOOTING.md` §11 for why the locale matters).
+
 1. Open the Termux:X11 Android app and wait for the X11 socket to be ready.
 2. Run:
 
 ```bash
-desktop-start
+bash start-gladio-desktop.sh
 ```
 
 3. Check the session with:

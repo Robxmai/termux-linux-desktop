@@ -171,6 +171,25 @@ tld_install_main() {
   fi
   TLD_X11_MODE=install
 
+  profile_file="$TLD_TOOLKIT_ROOT/profiles/base.env"
+  unset PROFILE_NAME PROFILE_VERSION DISPLAY_DEFAULT PULSE_SERVER_DEFAULT GUEST_CONTAINER GUEST_USER REQUIRES_GPU REQUIRES_WINE
+  if [[ -f "$profile_file" && ! -L "$profile_file" ]] &&
+    tld_read_env_file "$profile_file" "${profile_keys[@]}" &&
+    [[ "${PROFILE_NAME-}" == base &&
+      "${PROFILE_VERSION-}" == 2 &&
+      "${DISPLAY_DEFAULT-}" == :0 &&
+      "${PULSE_SERVER_DEFAULT-}" == tcp:127.0.0.1:4713 &&
+      "${GUEST_CONTAINER-}" == tld-ubuntu &&
+      "${GUEST_USER-}" == tld &&
+      "${REQUIRES_GPU-}" == true &&
+      "${REQUIRES_WINE-}" == true ]]; then
+    :
+  else
+    result=$?
+    tld_install_fail initialization "$result" 'base profile could not be loaded or validated'
+    return "$result"
+  fi
+
   TLD_INSTALL_STAGE=host-preflight
   tld_install_record_stage preflight
   if tld_check_host_prerequisites install; then
@@ -246,6 +265,15 @@ tld_install_main() {
   tld_install_record_stage guest-runtime
   if [[ "${REQUIRES_WINE-}" == true ]]; then
     source "$TLD_TOOLKIT_ROOT/lib/tld-wine-runtime.sh"
+    if [[ "${TLD_TEST_MODE:-0}" == 1 ]]; then
+      :
+    elif tld_wine_runtime_fetch; then
+      :
+    else
+      result=$?
+      tld_install_fail "$TLD_INSTALL_STAGE" "$result" 'guest Wine/GPU runtime artifacts could not be fetched'
+      return "$result"
+    fi
     if tld_wine_runtime_install; then
       :
     else
@@ -255,36 +283,13 @@ tld_install_main() {
     fi
   fi
 
-  TLD_INSTALL_STAGE=guest-launcher
-  tld_install_record_stage launcher-copy
-  if tld_guest_copy_launcher; then
-    :
-  else
-    result=$?
-    tld_install_fail "$TLD_INSTALL_STAGE" "$result" 'guest launcher copy failed'
-    return "$result"
-  fi
-
   TLD_INSTALL_STAGE=base-profile
   tld_install_record_stage base-profile
-  profile_file="$TLD_TOOLKIT_ROOT/profiles/base.env"
-  unset PROFILE_NAME PROFILE_VERSION DISPLAY_DEFAULT PULSE_SERVER_DEFAULT GUEST_CONTAINER GUEST_USER REQUIRES_GPU REQUIRES_WINE
-  if [[ -f "$profile_file" && ! -L "$profile_file" ]] &&
-    tld_read_env_file "$profile_file" "${profile_keys[@]}" &&
-    [[ "${PROFILE_NAME-}" == base &&
-      "${PROFILE_VERSION-}" == 2 &&
-      "${DISPLAY_DEFAULT-}" == :0 &&
-      "${PULSE_SERVER_DEFAULT-}" == tcp:127.0.0.1:4713 &&
-      "${GUEST_CONTAINER-}" == tld-ubuntu &&
-      "${GUEST_USER-}" == tld &&
-      "${REQUIRES_GPU-}" == true &&
-      "${REQUIRES_WINE-}" == true ]]; then
-    :
-  else
+  [[ "${PROFILE_NAME-}" == base && "${REQUIRES_WINE-}" == true ]] || {
     result=$?
-    tld_install_fail "$TLD_INSTALL_STAGE" "$result" 'base profile could not be loaded or validated'
+    tld_install_fail "$TLD_INSTALL_STAGE" "$result" 'base profile state changed during installation'
     return "$result"
-  fi
+  }
 
   TLD_INSTALL_STAGE=manifest
   architecture=$(uname -m) || {

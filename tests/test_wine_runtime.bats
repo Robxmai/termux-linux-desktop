@@ -46,6 +46,9 @@ setup() {
   : > "$wine_src"
   TLD_WINE_RUNTIME_TARBALL="$wine_src"
   export TLD_WINE_RUNTIME_TARBALL
+  printf 'cached' > "$TLD_RUNTIME_CACHE_DIR/wine-mono-11.1.0-x86.msi"
+  printf 'cached' > "$TLD_RUNTIME_CACHE_DIR/wine-gecko-2.47.4-x86.msi"
+  printf 'cached' > "$TLD_RUNTIME_CACHE_DIR/wine-gecko-2.47.4-x86_64.msi"
 
   run tld_wine_runtime_fetch
 

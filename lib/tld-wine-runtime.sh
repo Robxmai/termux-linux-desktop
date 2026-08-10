@@ -38,11 +38,13 @@ _tld_wr_require_env_file() {
 }
 
 tld_wine_runtime_versions() {
-  printf 'box64=%s turnip=%s dxvk=%s wine=%s firefox=%s\n' \
+  printf 'box64=%s turnip=%s dxvk=%s wine=%s wine_mono=%s wine_gecko=%s firefox=%s\n' \
     "${TLD_BOX64_VERSION:-ba373ab4b3ae2ecbc9aeeece309817cad47ba421}" \
     "${TLD_TURNIP_VERSION:-24.1.0}" \
     "${TLD_DXVK_VERSION:-2.6.1}" \
     "${TLD_WINE_VERSION:-11.11}" \
+    "${TLD_WINE_MONO_VERSION:-11.1.0}" \
+    "${TLD_WINE_GECKO_VERSION:-2.47.4}" \
     "${TLD_FIREFOX:-esr}"
 }
 
@@ -91,6 +93,7 @@ _tld_wr_firefox_version() {
 tld_wine_runtime_fetch() {
   local cache_dir
   local box64_url turnip_url dxvk_url ff_version ff_url
+  local mono_version gecko_version
   local patches_archive patches_dir apps_tar
   local wine_source="${TLD_WINE_RUNTIME_TARBALL:-}"
 
@@ -125,10 +128,10 @@ tld_wine_runtime_fetch() {
   }
 
   [[ -z ${TLD_SKIP_DIAG:-} ]] && {
-    _tld_wr_download \
-      'https://raw.githubusercontent.com/brunodev85/winlator/main/app/app/src/main/assets/rootfs_patches.tzst' \
-      "$cache_dir/winlator-rootfs-patches.tzst" 'winlator diagnostics' || return 1
     if [[ ! -s "$cache_dir/winlator-apps.tar.gz" ]]; then
+      _tld_wr_download \
+        'https://raw.githubusercontent.com/brunodev85/winlator-app/main/app/src/main/assets/rootfs_patches.tzst' \
+        "$cache_dir/winlator-rootfs-patches.tzst" 'winlator diagnostics' || return 1
       patches_dir="$cache_dir/.patches-extract"
       rm -rf -- "$patches_dir"
       mkdir -p -- "$patches_dir" "$cache_dir/.apps"
@@ -154,6 +157,20 @@ tld_wine_runtime_fetch() {
       _tld_wr_error "wine runtime source not found: $wine_source"
       return 1
     fi
+  fi
+
+  if [[ -z ${TLD_SKIP_WINE:-} ]]; then
+    mono_version="${TLD_WINE_MONO_VERSION:-11.1.0}"
+    gecko_version="${TLD_WINE_GECKO_VERSION:-2.47.4}"
+    _tld_wr_download \
+      "https://dl.winehq.org/wine/wine-mono/$mono_version/wine-mono-$mono_version-x86.msi" \
+      "$cache_dir/wine-mono-$mono_version-x86.msi" 'wine mono' || return 1
+    _tld_wr_download \
+      "https://dl.winehq.org/wine/wine-gecko/$gecko_version/wine-gecko-$gecko_version-x86.msi" \
+      "$cache_dir/wine-gecko-$gecko_version-x86.msi" 'wine gecko x86' || return 1
+    _tld_wr_download \
+      "https://dl.winehq.org/wine/wine-gecko/$gecko_version/wine-gecko-$gecko_version-x86_64.msi" \
+      "$cache_dir/wine-gecko-$gecko_version-x86_64.msi" 'wine gecko x86_64' || return 1
   fi
   tld_log "runtime components cached at $cache_dir"
   return 0
@@ -182,6 +199,9 @@ tld_wine_runtime_install() {
   env_prefix+=" TLD_GUEST_USER=${TLD_GUEST_USER:-tld}"
   env_prefix+=" TLD_WINE_VERSION=${TLD_WINE_VERSION:-11.11}"
   env_prefix+=" TLD_WINE_TREE_NAME=${TLD_WINE_TREE_NAME:-wine-11.11-amd64-wow64}"
+  env_prefix+=" TLD_WINE_MONO_VERSION=${TLD_WINE_MONO_VERSION:-11.1.0}"
+  env_prefix+=" TLD_WINE_GECKO_VERSION=${TLD_WINE_GECKO_VERSION:-2.47.4}"
+  env_prefix+=" TLD_WINE_PREFIX=${TLD_WINE_PREFIX:-/home/${TLD_GUEST_USER:-tld}/wine-runtime-prefix}"
   env_prefix+=" TLD_WINE_INSTALL_DIR=${TLD_WINE_INSTALL_DIR:-/opt/wine-runtime}"
   env_prefix+=" TLD_BOX64_VERSION=${TLD_BOX64_VERSION:-ba373ab4b3ae2ecbc9aeeece309817cad47ba421}"
   env_prefix+=" TLD_TURNIP_VERSION=${TLD_TURNIP_VERSION:-24.1.0}"
@@ -213,9 +233,12 @@ tld_wine_runtime_verify() {
     source "$TLD_ROOTFS_ENV_FILE"
   fi
   checks=$'set -Eeuo pipefail\n'
-  checks+=$'echo "box64=$(/usr/local/bin/box64 -v 2>/dev/null | head -1)"\n'
+  checks+=$'echo "box64=$(/usr/local/bin/box64 -v 2>&1 | head -1)"\n'
   checks+=$'echo "turnip=$(strings /usr/lib/aarch64-linux-gnu/libvulkan_freedreno.so 2>/dev/null | grep -m1 \"Mesa [0-9]\")"\n'
-  checks+=$'echo "wine=$(/opt/wine-runtime/wine-11.11-amd64-wow64/bin/wine --version 2>/dev/null | head -1)"\n'
+  checks+=$'echo "wine=$(/usr/local/bin/box64 /opt/wine-runtime/wine-11.11-amd64-wow64/bin/wine --version 2>/dev/null | head -1)"\n'
+  checks+=$'echo "wine_mono=$(test -d /home/tld/wine-runtime-prefix/drive_c/windows/mono/mono-2.0 && echo present || echo missing)"\n'
+  checks+=$'echo "wine_gecko_x86=$(test -f /home/tld/wine-runtime-prefix/drive_c/windows/syswow64/gecko/2.47.4/wine_gecko/VERSION && echo present || echo missing)"\n'
+  checks+=$'echo "wine_gecko_x86_64=$(test -f /home/tld/wine-runtime-prefix/drive_c/windows/system32/gecko/2.47.4/wine_gecko/VERSION && echo present || echo missing)"\n'
   checks+=$'echo "dxvk9=$(test -f /opt/wine-runtime/wine-11.11-amd64-wow64/lib/wine/x86_64-windows/d3d9.dll && echo present || echo missing)"\n'
   checks+=$'echo "firefox=$(/usr/local/bin/firefox --version 2>/dev/null | head -1)"\n'
   checks+=$'echo "vulkan=$(vulkaninfo --summary 2>/dev/null | grep -m1 deviceName || echo unavailable)"\n'
@@ -236,6 +259,8 @@ tld_wine_runtime_status() {
     printf 'dxvk: %s\n' "$( [[ -s "$cache_dir/dxvk-${TLD_DXVK_VERSION:-2.6.1}.tar.gz" ]] && echo cached || echo missing)"
     printf 'firefox: %s\n' "$( [[ -s "$cache_dir/firefox-esr.tar.xz" ]] && echo cached || echo missing)"
     printf 'wine runtime: %s\n' "$( [[ -s "$cache_dir/${TLD_WINE_TREE_NAME:-wine-11.11-amd64-wow64}.tar.gz" ]] && echo cached || echo missing)"
+    printf 'wine mono: %s\n' "$( [[ -s "$cache_dir/wine-mono-${TLD_WINE_MONO_VERSION:-11.1.0}-x86.msi" ]] && echo cached || echo missing)"
+    printf 'wine gecko: %s\n' "$( [[ -s "$cache_dir/wine-gecko-${TLD_WINE_GECKO_VERSION:-2.47.4}-x86.msi" && -s "$cache_dir/wine-gecko-${TLD_WINE_GECKO_VERSION:-2.47.4}-x86_64.msi" ]] && echo cached || echo missing)"
     printf 'diagnostics: %s\n' "$( [[ -s "$cache_dir/winlator-apps.tar.gz" ]] && echo cached || echo missing)"
   fi
   return 0

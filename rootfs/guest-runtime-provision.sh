@@ -21,10 +21,19 @@ has_file() { [[ -f "$1" ]]; }
 install_packages() {
   log "installing runtime packages"
   DEBIAN_FRONTEND=noninteractive apt-get update >/dev/null 2>&1 || fail "apt-get update"
-  DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    ca-certificates curl file tar xz-utils gcc g++ make cmake git \
-    libpulse0 libasound2t64 libdbus-glib-1-2 libxt6 \
-    xdg-utils x11vnc scrot >/dev/null 2>&1 || fail "apt-get install"
+  DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    ca-certificates curl file tar xz-utils gcc g++ make cmake git cabextract \
+    python3 python3-venv python3-pip perl nodejs npm ruby-full php-cli \
+    golang-go rustc cargo openjdk-17-jre mono-complete \
+    dotnet-runtime-8.0 aspnetcore-runtime-8.0 \
+    libpulse0 libasound2t64 libdbus-glib-1-2 libxt6 alsa-utils pulseaudio-utils \
+    xdg-utils x11vnc scrot ffmpeg \
+    gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-libav \
+    box86-android:armhf libc6:armhf libgcc-s1:armhf libstdc++6:armhf \
+    libvulkan1:arm64 mesa-vulkan-drivers:arm64 libgl1-mesa-dri:arm64 libglx-mesa0:arm64 \
+    libegl-mesa0:arm64 libgl1:arm64 libgles2:arm64 libgbm1:arm64 mesa-utils:arm64 >/dev/null 2>&1 || fail "apt-get install"
+  # Avoid pulling distro wine32:armhf and its conflicting Mesa Vulkan ICD.
+  DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends winetricks >/dev/null 2>&1 || fail "winetricks install"
   return 0
 }
 
@@ -94,6 +103,51 @@ install_wine() {
   return 0
 }
 
+# ----------------------------------------------------------- wine components
+install_wine_components() {
+  local target="$WINE_INSTALL_DIR/$WINE_TREE_NAME"
+  local prefix="${TLD_WINE_PREFIX:-/home/$GUEST_USER/wine-runtime-prefix}"
+  local box64_bin="${TLD_BOX64_BIN:-/usr/local/bin/box64}"
+  local gecko_version="${TLD_WINE_GECKO_VERSION:-2.47.4}"
+  local mono_version="${TLD_WINE_MONO_VERSION:-11.1.0}"
+  local mono_msi="$RUNTIME_CACHE/wine-mono-$mono_version-x86.msi"
+  local gecko_x86_msi="$RUNTIME_CACHE/wine-gecko-$gecko_version-x86.msi"
+  local gecko_x64_msi="$RUNTIME_CACHE/wine-gecko-$gecko_version-x86_64.msi"
+
+  [[ -x "$target/bin/wine" ]] || fail "wine runtime missing: $target/bin/wine"
+  [[ -x "$box64_bin" ]] || fail "box64 runtime missing: $box64_bin"
+  has_file "$mono_msi" || fail "Wine Mono installer missing from cache: $mono_msi"
+  has_file "$gecko_x86_msi" || fail "Wine Gecko x86 installer missing from cache: $gecko_x86_msi"
+  has_file "$gecko_x64_msi" || fail "Wine Gecko x86_64 installer missing from cache: $gecko_x64_msi"
+
+  if [[ ! -d "$prefix/drive_c/windows/mono/mono-2.0" ]]; then
+    env DISPLAY="${DISPLAY:-:0}" WINEPREFIX="$prefix" WINEDEBUG=-all \
+      WINEDLLOVERRIDES=winebth=d timeout 300 "$box64_bin" "$target/bin/wine" \
+      msiexec /i "$mono_msi" /qn || fail "Wine Mono install"
+  fi
+
+  if [[ ! -f "$prefix/drive_c/windows/system32/gecko/$gecko_version/wine_gecko/VERSION" ]]; then
+    env DISPLAY="${DISPLAY:-:0}" WINEPREFIX="$prefix" WINEDEBUG=-all \
+      WINEDLLOVERRIDES=winebth=d timeout 300 "$box64_bin" "$target/bin/wine" \
+      msiexec /i "$gecko_x64_msi" /qn || fail "Wine Gecko x86_64 install"
+  fi
+
+  if [[ ! -f "$prefix/drive_c/windows/syswow64/gecko/$gecko_version/wine_gecko/VERSION" ]]; then
+    env DISPLAY="${DISPLAY:-:0}" WINEPREFIX="$prefix" WINEDEBUG=-all \
+      WINEDLLOVERRIDES=winebth=d timeout 300 "$box64_bin" "$target/bin/wine" \
+      msiexec /i "$gecko_x86_msi" /qn || fail "Wine Gecko x86 install"
+  fi
+
+  [[ -d "$prefix/drive_c/windows/mono/mono-2.0" ]] || fail "Wine Mono prefix files missing"
+  [[ -f "$prefix/drive_c/windows/system32/gecko/$gecko_version/wine_gecko/VERSION" ]] || fail "Wine Gecko x86_64 prefix files missing"
+  [[ -f "$prefix/drive_c/windows/syswow64/gecko/$gecko_version/wine_gecko/VERSION" ]] || fail "Wine Gecko x86 prefix files missing"
+  if id -u "$GUEST_USER" >/dev/null 2>&1; then
+    chown -R "$GUEST_USER:$GUEST_USER" "$prefix"
+  fi
+  log "Wine Mono $mono_version and Gecko $gecko_version installed in $prefix"
+  return 0
+}
+
 # -------------------------------------------------------------------- dxvk
 install_dxvk() {
   local version="${TLD_DXVK_VERSION:-2.6.1}"
@@ -116,6 +170,28 @@ install_dxvk() {
   [[ -d "$dll_dir" ]] || fail "dxvk archive has no x64 dll directory"
   install -m 0644 "$dll_dir/d3d9.dll" "$dll_dir/dxgi.dll" "$dll_dir/d3d11.dll" "$wine_windows/" || fail "dxvk install"
   log "dxvk $version installed"
+  return 0
+}
+
+# ----------------------------------------------------------------- locale
+configure_locale() {
+  local profile_file=/etc/profile.d/01-locale-fix.sh
+  local rc_file
+
+  cat > "$profile_file" <<'EOF'
+export LANG=C.UTF-8
+export LC_ALL=C.UTF-8
+EOF
+  chmod 0644 "$profile_file"
+
+  for rc_file in /root/.bashrc /root/.profile "/home/$GUEST_USER/.bashrc" "/home/$GUEST_USER/.profile"; do
+    if [[ -f "$rc_file" ]]; then
+      if ! grep -q 'export LANG=C.UTF-8' "$rc_file"; then
+        printf '\nexport LANG=C.UTF-8\nexport LC_ALL=C.UTF-8\n' >> "$rc_file"
+      fi
+    fi
+  done
+  log "configured C.UTF-8 locale for desktop sessions and shells"
   return 0
 }
 
@@ -173,6 +249,7 @@ install_diag_apps() {
   has_file "$archive" || fail "winlator apps archive missing from cache: $archive"
   mkdir -p "$target"
   tar xzf "$archive" -C "$target" || fail "winlator apps extract"
+  chmod 0755 "$target/TestD3D.exe" "$target/GPUInfo.exe" 2>/dev/null || true
   [[ -x "$target/TestD3D.exe" && -x "$target/GPUInfo.exe" ]] || fail "winlator apps archive incomplete"
   log "diagnostic apps installed"
   return 0
@@ -194,11 +271,22 @@ write_runtime_configs() {
 WOW_PERFORMANCE_PROFILE=msaa-off
 WOW_DXVK_CONFIG_FILE=/usr/local/etc/dxvk.conf
 WOW_GX_MULTISAMPLE=0
-WOW_TU_DEBUG=sysmem,noconform
+WOW_TU_DEBUG=noconform
 WOW_MESA_VK_WSI_PRESENT_MODE=mailbox
 WOW_MESA_VK_WSI_USE_HWBUF=1
 WOW_WINEESYNC=0
 WOW_WINEFSYNC=0
+
+# Box64 dynarec: validated-safe explicit defaults.
+# The aggressive Winlator Performance preset (BIGBLOCK=3, WEAKBARRIER=2,
+# FASTNAN/FASTROUND=1, NATIVEFLAGS=1) reproduces the rendering-corruption
+# artifact class on this stack; do not re-enable without on-device A/B tests.
+export BOX64_DYNAREC_SAFEFLAGS=1
+export BOX64_DYNAREC_BIGBLOCK=1
+export BOX64_DYNAREC_WEAKBARRIER=1
+
+# On-screen diagnostics HUD (fps/drawcalls/frametimes); disable for releases
+export DXVK_HUD=fps,drawcalls,frametimes
 EOF
 
   cat > "$dxvk_conf" <<'EOF'
@@ -211,6 +299,13 @@ dxgi.customDeviceDesc = "NVIDIA GeForce GTX 1060"
 d3d9.customDeviceId = 1c03
 d3d9.customVendorId = 10de
 d3d9.customDeviceDesc = "NVIDIA GeForce GTX 1060"
+
+# FIXES rendering artifacts on Turnip (Adreno 740): DXVK's default 8 parallel
+# shader-compiler threads race on this driver and corrupt the frame.
+# Serializing compilation + capping frame latency yields clean frames at full
+# speed (verified: TestD3D 560 fps, zero artifacts via VNC + termux-x11).
+dxvk.numCompilerThreads = 1
+d3d9.maxFrameLatency = 1
 EOF
 
   cat > "$wine_env" <<'EOF'
@@ -431,7 +526,7 @@ fi
 WOW_PERFORMANCE_PROFILE="${WOW_PERFORMANCE_PROFILE:-baseline}"
 WOW_DXVK_CONFIG_FILE="${WOW_DXVK_CONFIG_FILE:-/usr/local/etc/dxvk.conf}"
 WOW_GX_MULTISAMPLE="${WOW_GX_MULTISAMPLE:-0}"
-WOW_TU_DEBUG="${WOW_TU_DEBUG:-sysmem,noconform}"
+WOW_TU_DEBUG="${WOW_TU_DEBUG:-noconform}"
 WOW_MESA_VK_WSI_PRESENT_MODE="${WOW_MESA_VK_WSI_PRESENT_MODE:-mailbox}"
 WOW_MESA_VK_WSI_USE_HWBUF="${WOW_MESA_VK_WSI_USE_HWBUF:-1}"
 WOW_WINEESYNC="${WOW_WINEESYNC:-0}"
@@ -456,17 +551,13 @@ mv "$tmp_wtf" "$WOW_WTF/Config.wtf"
 
 export WINEPREFIX="${WOW_WINEPREFIX:-/root/.wine}"
 source /usr/local/lib/wine-runtime-env.sh
-unset MESA_LOADER_DRIVER_OVERRIDE DXVK_HUD
+unset MESA_LOADER_DRIVER_OVERRIDE
 
 if ! WINEPREFIX="$WINEPREFIX" BOX64_BIN="$BOX64_BIN" WINE_BIN="$WINE_BIN" /usr/local/lib/apply-wine-global-profile.sh; then
     echo "Global Wine profile could not be applied." >&2
     exit 1
 fi
 
-export BOX64_DYNAREC=1
-export BOX64_DYNAREC_BIGBLOCK=1
-export BOX64_DYNAREC_SAFEFLAGS=1
-export BOX64_DYNAREC_WEAKBARRIER=1
 export MESA_NO_ERROR=0
 export vblank_mode=0
 export DXVK_CONFIG_FILE="$WOW_DXVK_CONFIG_FILE"
@@ -552,6 +643,65 @@ EOF
   return 0
 }
 
+# ------------------------------------------------------------- shortcuts
+write_desktop_shortcuts() {
+  local home="/home/$GUEST_USER"
+  local cfg="$home/.config"
+  local panel="$cfg/xfce4/panel"
+
+  mkdir -p "$cfg/xfce4" "$panel/launcher-17" "$panel/launcher-18" "$panel/launcher-19"
+
+  # XFCE helpers: makes exo-open based panel buttons resolve to real apps
+  cat > "$cfg/xfce4/helpers.rc" <<'EOF'
+TerminalEmulator=xfce4-terminal
+TerminalEmulatorDismissed=true
+FileManager=Thunar
+FileManagerDismissed=true
+WebBrowser=firefox
+WebBrowserDismissed=true
+EOF
+
+  cat > "$panel/launcher-17/17859613901.desktop" <<'EOF'
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Terminal Emulator
+Exec=xfce4-terminal
+Icon=org.xfce.terminalemulator
+Terminal=false
+Categories=System;TerminalEmulator;
+EOF
+
+  cat > "$panel/launcher-18/17859613902.desktop" <<'EOF'
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=File Manager
+Exec=Thunar
+Icon=org.xfce.filemanager
+Terminal=false
+Categories=System;FileManager;
+EOF
+
+  cat > "$panel/launcher-19/17859613903.desktop" <<'EOF'
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Web Browser
+GenericName=Web Browser
+Comment=Browse the World Wide Web
+Exec=/usr/local/bin/firefox %u
+Icon=/usr/share/pixmaps/firefox-esr.png
+Terminal=false
+Categories=Network;WebBrowser;
+MimeType=text/html;text/xml;application/xhtml+xml;x-scheme-handler/http;x-scheme-handler/https;
+EOF
+
+  chown -R "$GUEST_USER:$GUEST_USER" "$cfg/xfce4/panel" "$cfg/xfce4/helpers.rc" 2>/dev/null || true
+  log "desktop shortcuts written"
+  return 0
+}
+
 # ------------------------------------------------------------------ vncpass
 setup_vnc_password() {
   if [[ ! -f "/home/$GUEST_USER/.vncpasswd" ]]; then
@@ -564,9 +714,10 @@ setup_vnc_password() {
 
 # ------------------------------------------------------------------- main
 main() {
-  local component
-  for component in packages box64 turnip wine dxvk firefox diag configs vncpass; do
-    if [[ -n "${TLD_SKIP_$component:-}" ]]; then
+  local component skip_var
+  for component in packages box64 turnip wine wine_components dxvk firefox diag configs locale shortcuts vncpass; do
+    skip_var="TLD_SKIP_$component"
+    if [[ -n "${!skip_var:-}" ]]; then
       log "skipping $component"
       continue
     fi
@@ -575,10 +726,19 @@ main() {
       box64)    install_box64 ;;
       turnip)   install_turnip ;;
       wine)     install_wine ;;
+      wine_components)
+        if [[ -n "${TLD_SKIP_wine:-}" ]]; then
+          log "skipping wine_components"
+        else
+          install_wine_components
+        fi
+        ;;
       dxvk)     install_dxvk ;;
       firefox)  install_firefox ;;
       diag)     install_diag_apps ;;
       configs)  write_runtime_configs ;;
+      locale)   configure_locale ;;
+      shortcuts) write_desktop_shortcuts ;;
       vncpass)  setup_vnc_password ;;
     esac || fail "$component"
   done

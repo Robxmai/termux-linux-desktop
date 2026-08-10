@@ -56,6 +56,60 @@ for TLD_DOC in INSTALL ARCHITECTURE SUPPORT RECOVERY; do
   fi
 done
 
+TLD_GUEST_PROVISION="$TLD_REPO_ROOT/lib/tld-guest.sh"
+TLD_GUEST_BLOCK=$(sed -n '/^tld_guest_provision()/,/^}/p' "$TLD_GUEST_PROVISION")
+TLD_RUNTIME_PROVISION="$TLD_REPO_ROOT/rootfs/guest-runtime-provision.sh"
+TLD_RUNTIME_BLOCK=$(sed -n '/^install_packages()/,/^}/p' "$TLD_RUNTIME_PROVISION")
+TLD_RUNTIME_TEXT=$(cat "$TLD_RUNTIME_PROVISION")
+TLD_WINE_RUNTIME="$TLD_REPO_ROOT/lib/tld-wine-runtime.sh"
+TLD_INSTALLER="$TLD_REPO_ROOT/bin/desktop-install"
+TLD_PACKAGE_BLOCK="$TLD_GUEST_BLOCK
+$TLD_RUNTIME_BLOCK
+$TLD_RUNTIME_TEXT"
+if grep -q -- '--no-install-recommends' <<< "$TLD_GUEST_BLOCK" &&
+  ! grep -Eq 'apt-get install -y --no-install-recommends winetricks' <<< "$TLD_GUEST_BLOCK"; then
+  tld_check_fail 'desktop provisioning must install full package recommendations except targeted winetricks'
+fi
+for TLD_REQUIRED_PACKAGE in \
+  xfce4 xfce4-goodies libreoffice evince \
+  mono-complete dotnet-runtime-8.0 aspnetcore-runtime-8.0 \
+  python3 nodejs openjdk-17-jre ruby-full php-cli golang-go rustc \
+  libpulse0 libasound2t64 libvulkan1 mesa-utils box86-android:armhf \
+  cabextract winetricks; do
+  if ! grep -Eq "(^|[[:space:]])${TLD_REQUIRED_PACKAGE}(:[[:alnum:]]+)?([[:space:]\\\\]|$)" <<< "$TLD_PACKAGE_BLOCK"; then
+    tld_check_fail "desktop provisioning package is missing: $TLD_REQUIRED_PACKAGE"
+  fi
+done
+if ! grep -q 'firefox-esr' <<< "$TLD_RUNTIME_TEXT"; then
+  tld_check_fail 'Firefox ESR runtime provisioning is missing'
+fi
+for TLD_WINE_COMPONENT in 'wine-mono-$mono_version-x86.msi' 'wine-gecko-$gecko_version-x86.msi' 'wine-gecko-$gecko_version-x86_64.msi'; do
+  if ! grep -q -- "$TLD_WINE_COMPONENT" "$TLD_RUNTIME_PROVISION"; then
+    tld_check_fail "Wine component provisioning is missing: $TLD_WINE_COMPONENT"
+  fi
+done
+for TLD_WINE_FETCH_CHECK in 'wine-mono/$mono_version' 'wine-gecko/$gecko_version' 'TLD_WINE_MONO_VERSION' 'TLD_WINE_GECKO_VERSION'; do
+  if ! grep -q -- "$TLD_WINE_FETCH_CHECK" "$TLD_WINE_RUNTIME"; then
+    tld_check_fail "Wine runtime fetch is missing: $TLD_WINE_FETCH_CHECK"
+  fi
+done
+if ! grep -q 'tld_wine_runtime_fetch' "$TLD_INSTALLER"; then
+  tld_check_fail 'desktop installer does not fetch runtime artifacts'
+fi
+if [[ ! -f "$TLD_REPO_ROOT/rootfs/box86.list" ]]; then
+  tld_check_fail 'Box86 repository definition is missing'
+fi
+
+TLD_DOCTOR="$TLD_REPO_ROOT/bin/desktop-doctor"
+for TLD_DOCTOR_CHECK in \
+  _tld_doctor_full_desktop 'mono --version' 'dotnet --list-runtimes' \
+  'TLD_WINE_PREFIX' 'wine-runtime-prefix' 'wine_gecko/VERSION' runtime profile_version \
+  libreoffice xfce4-session dbus-run-session; do
+  if ! grep -q -- "$TLD_DOCTOR_CHECK" "$TLD_DOCTOR"; then
+    tld_check_fail "desktop doctor check is missing: $TLD_DOCTOR_CHECK"
+  fi
+done
+
 if (( TLD_FAILURES == 0 )); then
   printf '%s\n' 'PASS all script and documentation checks'
   exit 0

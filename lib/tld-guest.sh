@@ -402,129 +402,47 @@ tld_guest_provision() {
   _tld_guest_prepare_runtime || return 1
   _tld_guest_lock_acquire || return 1
   guest_command=$'set -Eeuo pipefail\n'
+  guest_command+=$'dpkg --add-architecture armhf\n'
+  guest_command+=$'if grep -q "^Architectures:" /etc/apt/sources.list.d/ubuntu.sources; then\n'
+  guest_command+=$'  sed -i "s/^Architectures:.*/Architectures: arm64 armhf/" /etc/apt/sources.list.d/ubuntu.sources\n'
+  guest_command+=$'else\n'
+  guest_command+=$'  sed -i "/^URIs: http:\\/\\/ports.ubuntu.com\\/ubuntu-ports\\//a Architectures: arm64 armhf" /etc/apt/sources.list.d/ubuntu.sources\n'
+  guest_command+=$'fi\n'
   guest_command+=$'DEBIAN_FRONTEND=noninteractive apt-get update\n'
-  guest_command+=$'DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates dbus-user-session dbus-x11 file iproute2 procps thunar xfce4-panel xfce4-session xfce4-terminal xfdesktop4 xfwm4 x11-xserver-utils\n'
+  guest_command+=$'DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl gnupg\n'
+  guest_command+=$'install -d -m 0755 /etc/apt/sources.list.d /etc/apt/trusted.gpg.d\n'
+  guest_command+=$'curl --fail --silent --show-error --location https://ryanfortner.github.io/box86-debs/box86.list -o /etc/apt/sources.list.d/box86.list\n'
+  guest_command+=$'box86_key=$(mktemp)\n'
+  guest_command+=$'curl --fail --silent --show-error --location https://ryanfortner.github.io/box86-debs/KEY.gpg | gpg --dearmor > "$box86_key"\n'
+  guest_command+=$'install -m 0644 "$box86_key" /etc/apt/trusted.gpg.d/box86-debs-archive-keyring.gpg\n'
+  guest_command+=$'rm -f "$box86_key"\n'
+  guest_command+=$'DEBIAN_FRONTEND=noninteractive apt-get update\n'
+  guest_command+=$'DEBIAN_FRONTEND=noninteractive apt-get install -y \\\n'
+  guest_command+=$'  bash coreutils util-linux procps htop btop man-db manpages \\\n'
+  guest_command+=$'  ca-certificates openssl gnupg debian-archive-keyring \\\n'
+  guest_command+=$'  curl wget file tar gzip bzip2 xz-utils zstd unzip zip p7zip-full git \\\n'
+  guest_command+=$'  iproute2 iputils-ping dnsutils net-tools openssh-client rsync \\\n'
+  guest_command+=$'  dbus-user-session dbus-x11 \\\n'
+  guest_command+=$'  xfce4 xfce4-goodies thunar file-roller gvfs gvfs-backends udisks2 \\\n'
+  guest_command+=$'  xfce4-panel xfce4-session xfce4-terminal xfdesktop4 xfwm4 \\\n'
+  guest_command+=$'  x11-utils x11-xserver-utils xauth xdg-utils x11vnc xclip xsel xdotool xinput scrot \\\n'
+  guest_command+=$'  fonts-dejavu fonts-liberation fonts-noto-core fonts-noto-mono \\\n'
+  guest_command+=$'  libreoffice libreoffice-gtk3 evince mousepad ristretto mpv ffmpeg \\\n'
+  guest_command+=$'  gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-libav \\\n'
+  guest_command+=$'  build-essential pkg-config cmake ninja-build gdb strace cabextract \\\n'
+  guest_command+=$'  python3 python3-venv python3-pip perl nodejs npm ruby-full php-cli golang-go rustc cargo openjdk-17-jre \\\n'
+  guest_command+=$'  mono-complete dotnet-runtime-8.0 aspnetcore-runtime-8.0 \\\n'
+  guest_command+=$'  libpulse0 libasound2t64 alsa-utils pulseaudio-utils \\\n'
+  guest_command+=$'  box86-android:armhf libc6:armhf libgcc-s1:armhf libstdc++6:armhf \\\n'
+  guest_command+=$'  libvulkan1:arm64 vulkan-tools:arm64 mesa-vulkan-drivers:arm64 libgl1-mesa-dri:arm64 libglx-mesa0:arm64 libegl-mesa0:arm64 libgl1:arm64 libgles2:arm64 libgbm1:arm64 mesa-utils:arm64\n'
+  # Ubuntu winetricks recommends the ARMHF Wine stack, which conflicts with the ARM64 Turnip ICD.
+  guest_command+=$'DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends winetricks\n'
   guest_command+="mkdir -p /home/$TLD_GUEST_USER"$'\n'
   guest_command+="if ! id -u $TLD_GUEST_USER >/dev/null 2>&1; then"$'\n'
   guest_command+="  useradd --create-home --home-dir /home/$TLD_GUEST_USER --shell /bin/bash $TLD_GUEST_USER"$'\n'
   guest_command+=$'fi\n'
   guest_command+="mkdir -p /home/$TLD_GUEST_USER/.config"$'\n'
   guest_command+="chown -R $TLD_GUEST_USER:$TLD_GUEST_USER /home/$TLD_GUEST_USER"$'\n'
-  if _tld_guest_login_script "$guest_command"; then
-    result=0
-  else
-    result=$?
-  fi
-  _tld_guest_lock_release || result=1
-  return "$result"
-}
-
-tld_guest_copy_launcher() {
-  local launcher_content guest_prefix guest_suffix guest_command result
-
-  _tld_guest_prepare_runtime || return 1
-  tld_require_command cat || return 1
-  _tld_guest_lock_acquire || return 1
-
-  if launcher_content=$(cat <<'TLD_LAUNCHER_CONTENT'
-#!/usr/bin/env bash
-set -Eeuo pipefail
-
-export DISPLAY=${DISPLAY:-:0}
-export PULSE_SERVER=${PULSE_SERVER:-tcp:127.0.0.1:4713}
-
-command -v dbus-run-session >/dev/null 2>&1 || {
-  printf '%s\n' 'required guest command not found: dbus-run-session' >&2
-  exit 1
-}
-command -v startxfce4 >/dev/null 2>&1 || {
-  printf '%s\n' 'required guest command not found: startxfce4' >&2
-  exit 1
-}
-command -v xfce4-session >/dev/null 2>&1 || {
-  printf '%s\n' 'required guest command not found: xfce4-session' >&2
-  exit 1
-}
-
-exec dbus-run-session -- startxfce4
-TLD_LAUNCHER_CONTENT
-  ); then
-    :
-  else
-    result=$?
-    _tld_guest_error "cannot generate guest launcher content with status $result"
-    _tld_guest_lock_release || result=1
-    return "$result"
-  fi
-  if [[ -z "$launcher_content" ]]; then
-    _tld_guest_error 'generated guest launcher content is empty'
-    result=1
-    _tld_guest_lock_release || result=1
-    return "$result"
-  fi
-
-  if guest_prefix=$(cat <<'TLD_GUEST_PREFIX'
-set -Eeuo pipefail
-target_dir=/usr/local/lib/termux-linux-desktop
-target="$target_dir/start-guest.sh"
-if ! install -d -m 0755 "$target_dir"; then
-  exit 1
-fi
-if ! temporary=$(mktemp "$target_dir/.start-guest.sh.XXXXXX"); then
-  exit 1
-fi
-if ! copy_target=$(mktemp "$target_dir/.start-guest.sh.copy.XXXXXX"); then
-  rm -f -- "$temporary" || true
-  exit 1
-fi
-trap 'rm -f -- "$temporary" "$copy_target" || true' EXIT
-if ! cat > "$temporary" <<'TLD_LAUNCHER'
-TLD_GUEST_PREFIX
-  ); then
-    :
-  else
-    result=$?
-    _tld_guest_error "cannot generate guest write command with status $result"
-    _tld_guest_lock_release || result=1
-    return "$result"
-  fi
-  if guest_suffix=$(cat <<'TLD_GUEST_SUFFIX'
-then
-  exit 1
-fi
-if [[ ! -s "$temporary" ]]; then
-  exit 1
-fi
-if ! chmod 0755 "$temporary"; then
-  exit 1
-fi
-if ! install -m 0755 "$temporary" "$copy_target"; then
-  exit 1
-fi
-if [[ ! -s "$copy_target" ]]; then
-  exit 1
-fi
-if ! mv -f -- "$copy_target" "$target"; then
-  exit 1
-fi
-if [[ ! -s "$target" ]]; then
-  exit 1
-fi
-if ! rm -f -- "$temporary"; then
-  exit 1
-fi
-trap - EXIT
-TLD_GUEST_SUFFIX
-  ); then
-    :
-  else
-    result=$?
-    _tld_guest_error "cannot generate guest completion command with status $result"
-    _tld_guest_lock_release || result=1
-    return "$result"
-  fi
-  guest_command="$guest_prefix"$'\n'"$launcher_content"$'\nTLD_LAUNCHER\n'"$guest_suffix"
-
   if _tld_guest_login_script "$guest_command"; then
     result=0
   else

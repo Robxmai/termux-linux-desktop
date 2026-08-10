@@ -127,7 +127,22 @@ _tld_wow_guest_icon() {
   icon_script+=$'Categories=Game;\n'
   icon_script+=$'DESKTOP\n'
   icon_script+=$'chmod 0755 /home/tld/Desktop/World\ of\ Warcraft.desktop\n'
-  icon_script+=$'chown -R tld:tld /home/tld/wow-desktop.sh /home/tld/Desktop 2>/dev/null || true\n'
+  icon_script+=$'mkdir -p /home/tld/.config/xfce4/panel/launcher-20\n'
+  icon_script+=$'cat > /home/tld/.config/xfce4/panel/launcher-20/17859613904.desktop <<\'PANEL\'\n'
+  icon_script+=$'[Desktop Entry]\n'
+  icon_script+=$'Version=1.0\n'
+  icon_script+=$'Type=Application\n'
+  icon_script+=$'Name=World of Warcraft\n'
+  icon_script+=$'Comment=Wrath of the Lich King 3.3.5a\n'
+  icon_script+=$'Exec=/home/tld/wow-desktop.sh\n'
+  icon_script+=$'Icon=application-x-executable\n'
+  icon_script+=$'Terminal=false\n'
+  icon_script+=$'Categories=Game;\n'
+  icon_script+=$'StartupNotify=true\n'
+  icon_script+=$'StartupWMClass=Wow.exe\n'
+  icon_script+=$'PANEL\n'
+  icon_script+=$'chmod 0755 /home/tld/.config/xfce4/panel/launcher-20/17859613904.desktop\n'
+  icon_script+=$'chown -R tld:tld /home/tld/wow-desktop.sh /home/tld/Desktop /home/tld/.config/xfce4/panel 2>/dev/null || true\n'
   if ! _tld_guest_login_script "$icon_script"; then
     return 1
   fi
