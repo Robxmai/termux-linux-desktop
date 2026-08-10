@@ -98,7 +98,7 @@ _tld_stage_allowed_file() {
   local relative_path="${1-}"
 
   case "$relative_path" in
-    bin/install-toolkit|bin/desktop-install|bin/desktop-start|bin/desktop-stop|bin/desktop-status|bin/desktop-doctor|bin/desktop-profile|bin/desktop-reset)
+    bin/*)
       return 0
       ;;
     lib/tld-*.sh|profiles/base.env|rootfs/ubuntu-24.04.env|docs/*.md|docs/*.txt)
