@@ -27,7 +27,7 @@ install_packages() {
     golang-go rustc cargo openjdk-17-jre mono-complete \
     dotnet-runtime-8.0 aspnetcore-runtime-8.0 \
     libpulse0 libasound2t64 libdbus-glib-1-2 libxt6 alsa-utils pulseaudio-utils \
-    xdg-utils x11vnc scrot ffmpeg \
+    xdg-utils x11vnc tigervnc-scraping-server scrot ffmpeg \
     gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-libav \
     box86-android:armhf libc6:armhf libgcc-s1:armhf libstdc++6:armhf \
     libvulkan1:arm64 mesa-vulkan-drivers:arm64 libgl1-mesa-dri:arm64 libglx-mesa0:arm64 \
@@ -739,6 +739,33 @@ EOF
   return 0
 }
 
+# ------------------------------------------------------ xfce compositor
+# XFCE compositing renders a black screen through Termux:X11 (verified
+# 2026-08-10). Pre-configure the xfwm4 profile so a fresh session is never
+# black. Runs before XFCE ever starts, so it writes the channel directly.
+configure_xfce_compositor() {
+  local xfce_dir="/root/.config/xfce4/xfconf/xfce-perchannel-xml"
+  local xfwm_file="$xfce_dir/xfwm4.xml"
+
+  mkdir -p "$xfce_dir"
+  if [[ -f "$xfwm_file" ]]; then
+    sed -i 's|<property name="use_compositing" type="bool" value="true"/>|<property name="use_compositing" type="bool" value="false"/>|' "$xfwm_file"
+  fi
+  if ! grep -q 'name="use_compositing"' "$xfwm_file" 2>/dev/null; then
+    cat >> "$xfwm_file" <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xfwm4" version="1.0">
+  <property name="general" type="empty">
+    <property name="use_compositing" type="bool" value="false"/>
+  </property>
+</channel>
+EOF
+  fi
+  chown -R root:root "$xfce_dir" 2>/dev/null || true
+  log "xfce compositing disabled for Termux:X11"
+  return 0
+}
+
 # ------------------------------------------------------------- shortcuts
 write_desktop_shortcuts() {
   local home="/root"
@@ -919,7 +946,7 @@ setup_vnc_password() {
 # ------------------------------------------------------------------- main
 main() {
   local component skip_var
-  for component in packages box64 turnip wine wine_components runtime_libs dxvk firefox diag configs locale wine_registry wine_exe shortcuts vncpass; do
+  for component in packages box64 turnip wine wine_components runtime_libs dxvk firefox diag configs locale wine_registry wine_exe shortcuts vncpass compositor; do
     skip_var="TLD_SKIP_$component"
     if [[ -n "${!skip_var:-}" ]]; then
       log "skipping $component"
@@ -947,6 +974,7 @@ main() {
       wine_exe) write_wine_exe_launcher ;;
       shortcuts) write_desktop_shortcuts ;;
       vncpass)  setup_vnc_password ;;
+      compositor) configure_xfce_compositor ;;
     esac || fail "$component"
   done
   log "runtime provisioning complete"
