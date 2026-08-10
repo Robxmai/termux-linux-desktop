@@ -201,7 +201,7 @@ tld_wine_runtime_install() {
   env_prefix+=" TLD_WINE_TREE_NAME=${TLD_WINE_TREE_NAME:-wine-11.11-amd64-wow64}"
   env_prefix+=" TLD_WINE_MONO_VERSION=${TLD_WINE_MONO_VERSION:-11.1.0}"
   env_prefix+=" TLD_WINE_GECKO_VERSION=${TLD_WINE_GECKO_VERSION:-2.47.4}"
-  env_prefix+=" TLD_WINE_PREFIX=${TLD_WINE_PREFIX:-/home/${TLD_GUEST_USER:-root}/wine-runtime-prefix}"
+  env_prefix+=" TLD_WINE_PREFIX=${TLD_WINE_PREFIX:-/root/wine-runtime-prefix}"
   env_prefix+=" TLD_WINE_INSTALL_DIR=${TLD_WINE_INSTALL_DIR:-/opt/wine-runtime}"
   env_prefix+=" TLD_BOX64_VERSION=${TLD_BOX64_VERSION:-ba373ab4b3ae2ecbc9aeeece309817cad47ba421}"
   env_prefix+=" TLD_TURNIP_VERSION=${TLD_TURNIP_VERSION:-24.1.0}"

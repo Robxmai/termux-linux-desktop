@@ -155,8 +155,14 @@ install_wine_components() {
 # files ship with libc6, but the unversioned symlink only comes with
 # libc6-dev — so create it explicitly for every emulation directory.
 # VITAL: must be present before Wine/Box64 ever runs.
+#
+# libc.so has the same trap in reverse: Ubuntu ships it as an ASCII linker
+# script (GROUP libc.so.6 ...), so dlopen("/lib/aarch64-linux-gnu/libc.so")
+# fails with "invalid ELF header". Some installers dlopen libc.so directly.
+# We replace the linker script with a real ELF copy of libc.so.6 (saved as
+# .ldscript for toolchains) so dlopen() works while ld still links.
 configure_runtime_libs() {
-  local d
+  local d src
 
   for d in \
     /usr/lib/x86_64-linux-gnu \
@@ -173,7 +179,29 @@ configure_runtime_libs() {
     ln -sf /usr/lib/i386-linux-gnu/libdl.so.2 /usr/lib/box86-i386-linux-gnu/libdl.so 2>/dev/null || true
     log "linked box86 i386 libdl"
   fi
-  log "runtime libraries configured (libdl.so present for all emulation arches)"
+
+  # libc.so: replace ASCII linker scripts with real ELF copies so dlopen()
+  # works (installers that dlopen libc.so otherwise fail with
+  # "invalid ELF header"). Keep the original script as .ldscript.
+  for d in /lib/aarch64-linux-gnu /usr/lib/x86_64-linux-gnu /usr/lib/arm-linux-gnueabihf; do
+    src="$d/libc.so.6"
+    [[ -f "$src" ]] || continue
+    if [[ -f "$d/libc.so" ]] && ! head -c 4 "$d/libc.so" 2>/dev/null | grep -q ELF; then
+      cp -a "$d/libc.so" "$d/libc.so.ldscript" 2>/dev/null || true
+      cp -a "$src" "$d/libc.so" || fail "cannot replace $d/libc.so"
+      log "replaced $d/libc.so linker script with ELF copy (original kept as .ldscript)"
+    fi
+    if [[ ! -e "$d/libc.so" ]]; then
+      cp -a "$src" "$d/libc.so" || fail "cannot create $d/libc.so"
+      log "created $d/libc.so (ELF copy of libc.so.6)"
+    fi
+  done
+  if [[ ! -e /usr/lib/box64-x86_64-linux-gnu/libc.so ]]; then
+    ln -sf /usr/lib/x86_64-linux-gnu/libc.so /usr/lib/box64-x86_64-linux-gnu/libc.so 2>/dev/null || true
+    log "linked box64 libc.so"
+  fi
+
+  log "runtime libraries configured (libdl.so + libc.so ELF for all emulation arches)"
   return 0
 }
 
@@ -891,7 +919,7 @@ setup_vnc_password() {
 # ------------------------------------------------------------------- main
 main() {
   local component skip_var
-  for component in packages box64 turnip wine wine_components runtime-libs dxvk firefox diag configs locale wine-registry wine-exe shortcuts vncpass; do
+  for component in packages box64 turnip wine wine_components runtime_libs dxvk firefox diag configs locale wine_registry wine_exe shortcuts vncpass; do
     skip_var="TLD_SKIP_$component"
     if [[ -n "${!skip_var:-}" ]]; then
       log "skipping $component"
@@ -909,14 +937,14 @@ main() {
           install_wine_components
         fi
         ;;
-      runtime-libs) configure_runtime_libs ;;
+      runtime_libs) configure_runtime_libs ;;
       dxvk)     install_dxvk ;;
       firefox)  install_firefox ;;
       diag)     install_diag_apps ;;
       configs)  write_runtime_configs ;;
       locale)   configure_locale ;;
-      wine-registry) configure_wine_registry ;;
-      wine-exe) write_wine_exe_launcher ;;
+      wine_registry) configure_wine_registry ;;
+      wine_exe) write_wine_exe_launcher ;;
       shortcuts) write_desktop_shortcuts ;;
       vncpass)  setup_vnc_password ;;
     esac || fail "$component"
