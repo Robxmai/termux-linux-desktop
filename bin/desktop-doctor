@@ -163,7 +163,7 @@ _tld_doctor_guest_locale() {
 _tld_doctor_full_desktop() {
   local container="${TLD_ROOTFS_CONTAINER:-tld-ubuntu}"
   local guest_user="${TLD_GUEST_USER:-root}"
-  local wine_prefix="/home/$guest_user/wine-runtime-prefix"
+  local wine_prefix="/root/wine-runtime-prefix"
 
   if proot-distro login "$container" --user "$guest_user" --shared-tmp --shared-x11 -- \
     env TLD_WINE_PREFIX="$wine_prefix" /bin/bash -lc '
