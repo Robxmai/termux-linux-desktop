@@ -104,6 +104,16 @@ export LC_ALL=C.UTF-8
 command -v dbus-run-session >/dev/null 2>&1 || exit 1
 command -v startxfce4 >/dev/null 2>&1 || exit 1
 command -v xfce4-session >/dev/null 2>&1 || exit 1
+# TigerVNC on the live display (starts with the session, survives with it).
+if command -v x0vncserver >/dev/null 2>&1 && ! pgrep -x x0vncserver >/dev/null 2>&1; then
+  if [[ ! -f /root/.vncpasswd ]]; then
+    mkdir -p /root
+    printf "%s\n" "termux" "termux" | vncpasswd -f > /root/.vncpasswd 2>/dev/null || true
+    chmod 0600 /root/.vncpasswd 2>/dev/null || true
+  fi
+  setsid x0vncserver -PasswordFile /root/.vncpasswd -display :0 -rfbport 5900 \
+    > /tmp/x0vncserver.log 2>&1 < /dev/null &
+fi
 exec dbus-run-session -- startxfce4' >> "$TLD_LOG_DIR/guest.log" 2>&1; then
     return 1
   fi
