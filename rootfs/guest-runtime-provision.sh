@@ -874,6 +874,16 @@ export WINEESYNC=0
 export WINEFSYNC=0
 export WINEDEBUG="${WINEDEBUG:--all}"
 
+# Single-instance guard: never start a second copy of the same exe, or two
+# WoW instances share one prefix and produce a black fullscreen window.
+# Match ONLY the actual wine binary running the exe (not this launcher's
+# own cmdline, which would self-match and block every launch).
+EXE_BASE="$(basename "$EXE_PATH")"
+if pgrep -f "wine-11\.11-amd64-wow64/bin/wine .*${EXE_BASE}" > /dev/null 2>&1; then
+  echo "wine-exe: $EXE_BASE already running; not starting a duplicate" >&2
+  exit 0
+fi
+
 cd "$(dirname "$EXE_PATH")"
 exec ionice -c 2 -n 0 "$BOX64_BIN" "$WINE_BIN" "$EXE_PATH" "$@"
 EOF
