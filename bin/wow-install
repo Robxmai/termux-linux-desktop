@@ -69,8 +69,8 @@ _tld_wow_write_state() {
   state_file="$TLD_STATE_DIR/wow.env"
   if ! tld_manifest_begin wow ||
     ! tld_manifest_set game_dir "$TLD_WOW_GAME_DIR" ||
-    ! tld_manifest_set overlay_root '/home/tld/wow-tests/desktop-wow-overlay' ||
-    ! tld_manifest_set prefix '/home/tld/wow-tests/desktop-wow-prefix' ||
+    ! tld_manifest_set overlay_root '/root/wow-tests/desktop-wow-overlay' ||
+    ! tld_manifest_set prefix '/root/wow-tests/desktop-wow-prefix' ||
     ! tld_manifest_set wine_bin '/opt/wine-runtime/wine-11.11-amd64-wow64/bin/wine' ||
     ! tld_manifest_set launcher '/usr/local/bin/wow-launcher' ||
     ! tld_manifest_commit "$state_file"; then
@@ -82,9 +82,9 @@ _tld_wow_write_state() {
 _tld_wow_guest_prepare() {
   local guest_script
   guest_script=$'set -Eeuo pipefail\n'
-  guest_script+="WOW_GAME_DIR='$TLD_WOW_GAME_DIR' WOW_OVERLAY_ROOT=/home/tld/wow-tests/desktop-wow-overlay /usr/local/lib/prepare-wow-overlay.sh\n"
-  guest_script+=$'mkdir -p /home/tld/Desktop /home/tld/.local/share/applications 2>/dev/null || true\n'
-  guest_script+=$'chown -R tld:tld /home/tld/wow-tests /home/tld/Desktop 2>/dev/null || true\n'
+  guest_script+="WOW_GAME_DIR='$TLD_WOW_GAME_DIR' WOW_OVERLAY_ROOT=/root/wow-tests/desktop-wow-overlay /usr/local/lib/prepare-wow-overlay.sh\n"
+  guest_script+=$'mkdir -p /root/Desktop /root/.local/share/applications 2>/dev/null || true\n'
+  guest_script+=$'chown -R root:root /root/wow-tests /root/Desktop 2>/dev/null || true\n'
   if ! _tld_guest_login_script "$guest_script"; then
     return 1
   fi
@@ -95,12 +95,12 @@ _tld_wow_guest_prefix() {
   local guest_script
   guest_script=$'set -Eeuo pipefail\n'
   guest_script+=$'export DISPLAY=:0\n'
-  guest_script+=$'export WINEPREFIX=/home/tld/wow-tests/desktop-wow-prefix\n'
+  guest_script+=$'export WINEPREFIX=/root/wow-tests/desktop-wow-prefix\n'
   guest_script+=$'source /usr/local/lib/wine-runtime-env.sh\n'
-  guest_script+=$'mkdir -p /home/tld/wow-tests\n'
+  guest_script+=$'mkdir -p /root/wow-tests\n'
   guest_script+=$'/usr/local/bin/box64 /opt/wine-runtime/wine-11.11-amd64-wow64/bin/wineboot --init >/dev/null 2>&1 || true\n'
-  guest_script+=$'WINEPREFIX=/home/tld/wow-tests/desktop-wow-prefix /usr/local/bin/box64 /opt/wine-runtime/wine-11.11-amd64-wow64/bin/wineboot -u >/dev/null 2>&1 || true\n'
-  guest_script+=$'test -f /home/tld/wow-tests/desktop-wow-prefix/system.reg\n'
+  guest_script+=$'WINEPREFIX=/root/wow-tests/desktop-wow-prefix /usr/local/bin/box64 /opt/wine-runtime/wine-11.11-amd64-wow64/bin/wineboot -u >/dev/null 2>&1 || true\n'
+  guest_script+=$'test -f /root/wow-tests/desktop-wow-prefix/system.reg\n'
   if ! _tld_guest_login_script "$guest_script"; then
     return 1
   fi
@@ -110,39 +110,39 @@ _tld_wow_guest_prefix() {
 _tld_wow_guest_icon() {
   local icon_script
   icon_script=$'set -Eeuo pipefail\n'
-  icon_script+=$'cat > /home/tld/wow-desktop.sh <<\'SH\'\n'
+  icon_script+=$'cat > /root/wow-desktop.sh <<\'SH\'\n'
   icon_script+=$'#!/usr/bin/env bash\n'
   icon_script+=$'set -Eeuo pipefail\n'
   icon_script+=$"exec /usr/local/bin/wine-exe '$TLD_WOW_GAME_DIR/Wow.exe'\n"
   icon_script+=$'SH\n'
-  icon_script+=$'chmod 0755 /home/tld/wow-desktop.sh\n'
-  icon_script+=$'cat > /home/tld/Desktop/World\ of\ Warcraft.desktop <<\'DESKTOP\'\n'
+  icon_script+=$'chmod 0755 /root/wow-desktop.sh\n'
+  icon_script+=$'cat > /root/Desktop/World\ of\ Warcraft.desktop <<\'DESKTOP\'\n'
   icon_script+=$'[Desktop Entry]\n'
   icon_script+=$'Version=1.0\n'
   icon_script+=$'Type=Application\n'
   icon_script+=$'Name=World of Warcraft\n'
   icon_script+=$'Comment=Wrath of the Lich King 3.3.5a (wined3d)\n'
-  icon_script+=$'Exec=/home/tld/wow-desktop.sh\n'
+  icon_script+=$'Exec=/root/wow-desktop.sh\n'
   icon_script+=$'Terminal=false\n'
   icon_script+=$'Categories=Game;\n'
   icon_script+=$'DESKTOP\n'
-  icon_script+=$'chmod 0755 /home/tld/Desktop/World\ of\ Warcraft.desktop\n'
-  icon_script+=$'mkdir -p /home/tld/.config/xfce4/panel/launcher-20\n'
-  icon_script+=$'cat > /home/tld/.config/xfce4/panel/launcher-20/17859613904.desktop <<\'PANEL\'\n'
+  icon_script+=$'chmod 0755 /root/Desktop/World\ of\ Warcraft.desktop\n'
+  icon_script+=$'mkdir -p /root/.config/xfce4/panel/launcher-20\n'
+  icon_script+=$'cat > /root/.config/xfce4/panel/launcher-20/17859613904.desktop <<\'PANEL\'\n'
   icon_script+=$'[Desktop Entry]\n'
   icon_script+=$'Version=1.0\n'
   icon_script+=$'Type=Application\n'
   icon_script+=$'Name=World of Warcraft\n'
   icon_script+=$'Comment=Wrath of the Lich King 3.3.5a (wined3d)\n'
-  icon_script+=$'Exec=/home/tld/wow-desktop.sh\n'
+  icon_script+=$'Exec=/root/wow-desktop.sh\n'
   icon_script+=$'Icon=application-x-executable\n'
   icon_script+=$'Terminal=false\n'
   icon_script+=$'Categories=Game;\n'
   icon_script+=$'StartupNotify=true\n'
   icon_script+=$'StartupWMClass=Wow.exe\n'
   icon_script+=$'PANEL\n'
-  icon_script+=$'chmod 0755 /home/tld/.config/xfce4/panel/launcher-20/17859613904.desktop\n'
-  icon_script+=$'chown -R tld:tld /home/tld/wow-desktop.sh /home/tld/Desktop /home/tld/.config/xfce4/panel 2>/dev/null || true\n'
+  icon_script+=$'chmod 0755 /root/.config/xfce4/panel/launcher-20/17859613904.desktop\n'
+  icon_script+=$'chown -R root:root /root/wow-desktop.sh /root/Desktop /root/.config/xfce4/panel 2>/dev/null || true\n'
   if ! _tld_guest_login_script "$icon_script"; then
     return 1
   fi

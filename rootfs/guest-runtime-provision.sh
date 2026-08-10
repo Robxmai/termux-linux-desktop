@@ -6,7 +6,7 @@
 set -Eeuo pipefail
 
 RUNTIME_CACHE="${TLD_RUNTIME_CACHE:-/root/runtime-cache}"
-GUEST_USER="${TLD_GUEST_USER:-tld}"
+GUEST_USER="${TLD_GUEST_USER:-root}"
 WINE_VERSION="${TLD_WINE_VERSION:-11.11}"
 WINE_TREE_NAME="${TLD_WINE_TREE_NAME:-wine-11.11-amd64-wow64}"
 WINE_INSTALL_DIR="${TLD_WINE_INSTALL_DIR:-/opt/wine-runtime}"
@@ -106,7 +106,7 @@ install_wine() {
 # ----------------------------------------------------------- wine components
 install_wine_components() {
   local target="$WINE_INSTALL_DIR/$WINE_TREE_NAME"
-  local prefix="${TLD_WINE_PREFIX:-/home/$GUEST_USER/wine-runtime-prefix}"
+  local prefix="${TLD_WINE_PREFIX:-/root/wine-runtime-prefix}"
   local box64_bin="${TLD_BOX64_BIN:-/usr/local/bin/box64}"
   local gecko_version="${TLD_WINE_GECKO_VERSION:-2.47.4}"
   local mono_version="${TLD_WINE_MONO_VERSION:-11.1.0}"
@@ -181,7 +181,7 @@ configure_runtime_libs() {
 # Bake the wined3d DLL overrides and environment into the Wine prefix so
 # every .exe launch uses builtin D3D9/DXGI (no DXVK) regardless of shell env.
 configure_wine_registry() {
-  local prefix="${TLD_WINE_PREFIX:-/home/$GUEST_USER/wine-runtime-prefix}"
+  local prefix="${TLD_WINE_PREFIX:-/root/wine-runtime-prefix}"
   local box64_bin="${TLD_BOX64_BIN:-/usr/local/bin/box64}"
   local wine_bin="$WINE_INSTALL_DIR/$WINE_TREE_NAME/bin/wine"
   local dll
@@ -252,7 +252,7 @@ export LC_ALL=C.UTF-8
 EOF
   chmod 0644 "$profile_file"
 
-  for rc_file in /root/.bashrc /root/.profile "/home/$GUEST_USER/.bashrc" "/home/$GUEST_USER/.profile"; do
+  for rc_file in /root/.bashrc /root/.profile "/root/.bashrc" "/root/.profile"; do
     if [[ -f "$rc_file" ]]; then
       if ! grep -q 'export LANG=C.UTF-8' "$rc_file"; then
         printf '\nexport LANG=C.UTF-8\nexport LC_ALL=C.UTF-8\n' >> "$rc_file"
@@ -713,7 +713,7 @@ EOF
 
 # ------------------------------------------------------------- shortcuts
 write_desktop_shortcuts() {
-  local home="/home/$GUEST_USER"
+  local home="/root"
   local cfg="$home/.config"
   local panel="$cfg/xfce4/panel"
 
@@ -772,7 +772,7 @@ EOF
 
 # --------------------------------------------------------- wine-exe
 write_wine_exe_launcher() {
-  local guest_home="/home/$GUEST_USER"
+  local guest_home="/root"
   local game_dir="/data/data/com.termux/files/home/WoW 3.3.5a"
   local desktop_dir="$guest_home/Desktop"
   local apps_dir="$guest_home/.local/share/applications"
@@ -788,7 +788,7 @@ set -Eeuo pipefail
 WOW_GAME_DIR="${WOW_GAME_DIR:-/data/data/com.termux/files/home/WoW 3.3.5a}"
 BOX64_BIN="${BOX64_BIN:-/usr/local/bin/box64}"
 WINE_BIN="${WINE_BIN:-/opt/wine-runtime/wine-11.11-amd64-wow64/bin/wine}"
-WINEPREFIX_DEFAULT="${WINEPREFIX_DEFAULT:-/home/tld/wow-tests/desktop-wow-prefix}"
+WINEPREFIX_DEFAULT="${WINEPREFIX_DEFAULT:-/root/wow-tests/desktop-wow-prefix}"
 
 if [[ $# -lt 1 ]]; then
   echo "usage: wine-exe <path-to-exe> [args...]" >&2
@@ -880,10 +880,10 @@ EOFS
 
 # ------------------------------------------------------------------ vncpass
 setup_vnc_password() {
-  if [[ ! -f "/home/$GUEST_USER/.vncpasswd" ]]; then
-    mkdir -p "/home/$GUEST_USER"
-    x11vnc -storepasswd termux "/home/$GUEST_USER/.vncpasswd" >/dev/null 2>&1 || true
-    chown "$GUEST_USER:$GUEST_USER" "/home/$GUEST_USER/.vncpasswd" 2>/dev/null || true
+  if [[ ! -f "/root/.vncpasswd" ]]; then
+    mkdir -p "/root"
+    x11vnc -storepasswd termux "/root/.vncpasswd" >/dev/null 2>&1 || true
+    chown "$GUEST_USER:$GUEST_USER" "/root/.vncpasswd" 2>/dev/null || true
   fi
   return 0
 }

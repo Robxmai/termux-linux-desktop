@@ -38,7 +38,7 @@ tld_wow_launch_main() {
     return 1
   }
 
-  exec proot-distro login tld-ubuntu --user tld --shared-tmp --shared-x11 \
+  exec proot-distro login tld-ubuntu --user root --shared-tmp --shared-x11 \
     --bind "$overlay_root/Cache:$game_dir/Cache" \
     --bind "$overlay_root/Errors:$game_dir/Errors" \
     --bind "$overlay_root/Logs:$game_dir/Logs" \

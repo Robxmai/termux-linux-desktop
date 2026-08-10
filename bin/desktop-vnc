@@ -24,7 +24,7 @@ _tld_vnc_fail() {
 }
 
 _tld_vnc_is_running() {
-  proot-distro login tld-ubuntu --user tld --shared-tmp -- \
+  proot-distro login tld-ubuntu --user root --shared-tmp -- \
     bash -c 'pgrep -x x11vnc >/dev/null 2>&1'
 }
 
@@ -33,14 +33,14 @@ _tld_vnc_start() {
     printf 'PASS vnc already running on port %s (password: termux)\n' "$TLD_VNC_PORT"
     return 0
   fi
-  if ! proot-distro login tld-ubuntu --user tld --shared-tmp --shared-x11 -- \
-    bash -c 'test -f /home/tld/.vncpasswd'; then
+  if ! proot-distro login tld-ubuntu --user root --shared-tmp --shared-x11 -- \
+    bash -c 'test -f /root/.vncpasswd'; then
     _tld_vnc_fail 'vnc password is not configured (run desktop-install first)'
     return 1
   fi
-  nohup proot-distro login tld-ubuntu --user tld --shared-tmp --shared-x11 -- \
-    x11vnc -display :0 -rfbauth /home/tld/.vncpasswd -rfbport "$TLD_VNC_PORT" \
-    -shared -forever -noxdamage -o /home/tld/x11vnc.log >/dev/null 2>&1 &
+  nohup proot-distro login tld-ubuntu --user root --shared-tmp --shared-x11 -- \
+    x11vnc -display :0 -rfbauth /root/.vncpasswd -rfbport "$TLD_VNC_PORT" \
+    -shared -forever -noxdamage -o /root/x11vnc.log >/dev/null 2>&1 &
   sleep 4
   if _tld_vnc_is_running; then
     local address
@@ -57,7 +57,7 @@ _tld_vnc_stop() {
     printf 'PASS vnc already stopped\n'
     return 0
   fi
-  proot-distro login tld-ubuntu --user tld --shared-tmp -- \
+  proot-distro login tld-ubuntu --user root --shared-tmp -- \
     bash -c 'pkill -x x11vnc || true' >/dev/null 2>&1 || true
   sleep 2
   if _tld_vnc_is_running; then

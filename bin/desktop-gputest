@@ -42,15 +42,15 @@ tld_gputest_main() {
   }
 
   if [[ "$TLD_GPUTEST_INFO" == 1 ]]; then
-    proot-distro login tld-ubuntu --user tld --shared-tmp --shared-x11 -- \
-      env DISPLAY=:0 WINEPREFIX=/home/tld/wow-tests/desktop-wow-prefix \
+    proot-distro login tld-ubuntu --user root --shared-tmp --shared-x11 -- \
+      env DISPLAY=:0 WINEPREFIX=/root/wow-tests/desktop-wow-prefix \
       /usr/local/bin/box64 /opt/wine-runtime/wine-11.11-amd64-wow64/bin/wine \
       /opt/apps/GPUInfo.exe
     return $?
   fi
 
-  nohup proot-distro login tld-ubuntu --user tld --shared-tmp --shared-x11 -- \
-    env DISPLAY=:0 WINEPREFIX=/home/tld/wow-tests/desktop-wow-prefix \
+  nohup proot-distro login tld-ubuntu --user root --shared-tmp --shared-x11 -- \
+    env DISPLAY=:0 WINEPREFIX=/root/wow-tests/desktop-wow-prefix \
     /usr/local/bin/box64 /opt/wine-runtime/wine-11.11-amd64-wow64/bin/wine \
     /opt/apps/TestD3D.exe >/dev/null 2>&1 &
   printf 'PASS gputest started (TestD3D on display :0)\n'

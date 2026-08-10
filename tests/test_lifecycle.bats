@@ -203,7 +203,7 @@ PY
 
   [ "$status" -eq 0 ]
   [[ "$output" == *"XFCE components detected"* ]]
-  grep -q '^proot-distro login tld-ubuntu --user tld --shared-tmp --shared-x11 --detach -- bash -c export DISPLAY' "$TLD_TEST_CALL_LOG"
+  grep -q '^proot-distro login tld-ubuntu --user root --shared-tmp --shared-x11 --detach -- bash -c export DISPLAY' "$TLD_TEST_CALL_LOG"
   grep -q 'exec dbus-run-session -- startxfce4' "$TLD_TEST_CALL_LOG"
   grep -q 'export LANG=C.UTF-8' "$TLD_TEST_CALL_LOG"
   [ -f "$TLD_STATE_DIR/processes/desktop.env" ]

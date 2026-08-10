@@ -196,12 +196,12 @@ tld_wine_runtime_install() {
   }
 
   env_prefix="TLD_RUNTIME_CACHE=$guest_cache"
-  env_prefix+=" TLD_GUEST_USER=${TLD_GUEST_USER:-tld}"
+  env_prefix+=" TLD_GUEST_USER=${TLD_GUEST_USER:-root}"
   env_prefix+=" TLD_WINE_VERSION=${TLD_WINE_VERSION:-11.11}"
   env_prefix+=" TLD_WINE_TREE_NAME=${TLD_WINE_TREE_NAME:-wine-11.11-amd64-wow64}"
   env_prefix+=" TLD_WINE_MONO_VERSION=${TLD_WINE_MONO_VERSION:-11.1.0}"
   env_prefix+=" TLD_WINE_GECKO_VERSION=${TLD_WINE_GECKO_VERSION:-2.47.4}"
-  env_prefix+=" TLD_WINE_PREFIX=${TLD_WINE_PREFIX:-/home/${TLD_GUEST_USER:-tld}/wine-runtime-prefix}"
+  env_prefix+=" TLD_WINE_PREFIX=${TLD_WINE_PREFIX:-/home/${TLD_GUEST_USER:-root}/wine-runtime-prefix}"
   env_prefix+=" TLD_WINE_INSTALL_DIR=${TLD_WINE_INSTALL_DIR:-/opt/wine-runtime}"
   env_prefix+=" TLD_BOX64_VERSION=${TLD_BOX64_VERSION:-ba373ab4b3ae2ecbc9aeeece309817cad47ba421}"
   env_prefix+=" TLD_TURNIP_VERSION=${TLD_TURNIP_VERSION:-24.1.0}"
@@ -236,9 +236,9 @@ tld_wine_runtime_verify() {
   checks+=$'echo "box64=$(/usr/local/bin/box64 -v 2>&1 | head -1)"\n'
   checks+=$'echo "turnip=$(strings /usr/lib/aarch64-linux-gnu/libvulkan_freedreno.so 2>/dev/null | grep -m1 \"Mesa [0-9]\")"\n'
   checks+=$'echo "wine=$(/usr/local/bin/box64 /opt/wine-runtime/wine-11.11-amd64-wow64/bin/wine --version 2>/dev/null | head -1)"\n'
-  checks+=$'echo "wine_mono=$(test -d /home/tld/wine-runtime-prefix/drive_c/windows/mono/mono-2.0 && echo present || echo missing)"\n'
-  checks+=$'echo "wine_gecko_x86=$(test -f /home/tld/wine-runtime-prefix/drive_c/windows/syswow64/gecko/2.47.4/wine_gecko/VERSION && echo present || echo missing)"\n'
-  checks+=$'echo "wine_gecko_x86_64=$(test -f /home/tld/wine-runtime-prefix/drive_c/windows/system32/gecko/2.47.4/wine_gecko/VERSION && echo present || echo missing)"\n'
+  checks+=$'echo "wine_mono=$(test -d /root/wine-runtime-prefix/drive_c/windows/mono/mono-2.0 && echo present || echo missing)"\n'
+  checks+=$'echo "wine_gecko_x86=$(test -f /root/wine-runtime-prefix/drive_c/windows/syswow64/gecko/2.47.4/wine_gecko/VERSION && echo present || echo missing)"\n'
+  checks+=$'echo "wine_gecko_x86_64=$(test -f /root/wine-runtime-prefix/drive_c/windows/system32/gecko/2.47.4/wine_gecko/VERSION && echo present || echo missing)"\n'
   checks+=$'echo "dxvk9=$(test -f /opt/wine-runtime/wine-11.11-amd64-wow64/lib/wine/x86_64-windows/d3d9.dll && echo present || echo missing)"\n'
   checks+=$'echo "firefox=$(/usr/local/bin/firefox --version 2>/dev/null | head -1)"\n'
   checks+=$'echo "vulkan=$(vulkaninfo --summary 2>/dev/null | grep -m1 deviceName || echo unavailable)"\n'

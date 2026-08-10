@@ -35,7 +35,7 @@ $HOME/.config/termux-linux-desktop/     user configuration
 
 The Ubuntu 24.04 environment is a PRoot container named `tld-ubuntu`. It is
 provisioned with XFCE, D-Bus, Thunar, a terminal, and diagnostics, and runs
-with a non-privileged desktop user named `tld`. Guest root operations are
+with a non-privileged desktop user is root. Guest root operations are
 limited to installation and provisioning and are not Android root.
 
 `start-gladio-desktop.sh` is the only launcher for the desktop. It delegates

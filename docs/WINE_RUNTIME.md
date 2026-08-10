@@ -38,7 +38,7 @@ guest and is referenced by the game launcher
 
 The installer also requires Wine Mono `11.1.0` and Wine Gecko `2.47.4` x86 and
 x86_64 MSI files in the runtime cache. It installs them into the managed
-`/home/tld/wine-runtime-prefix` through Box64 so both native and 32-bit Windows
+`/root/wine-runtime-prefix` through Box64 so both native and 32-bit Windows
 components have the same managed-code and embedded-browser support.
 
 ## Pinned versions

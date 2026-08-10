@@ -68,7 +68,7 @@ wine-gecko-2.47.4-x86.msi
 wine-gecko-2.47.4-x86_64.msi
 ```
 
-They are installed into `/home/tld/wine-runtime-prefix` through Box64 and the
+They are installed into `/root/wine-runtime-prefix` through Box64 and the
 pinned Wine runtime. Download them from the corresponding WineHQ release
 directories before running `desktop-install`.
 

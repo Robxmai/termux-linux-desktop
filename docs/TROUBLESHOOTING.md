@@ -220,8 +220,8 @@ does not assign one when everything is unset. The `runsv` service env had
 
 2. The `guest-runtime-provision.sh` `locale` stage writes
    `/etc/profile.d/01-locale-fix.sh` and appends the same exports to
-   `/root/.bashrc`, `/root/.profile`, `/home/tld/.bashrc`, and
-   `/home/tld/.profile`, so every login shell in the guest is UTF-8 too.
+   `/root/.bashrc`, `/root/.profile`, `/root/.bashrc`, and
+   `/root/.profile`, so every login shell in the guest is UTF-8 too.
 
 `C.UTF-8` was chosen because it is the only UTF-8 locale generated in the
 Ubuntu 24.04 PRoot guest (`locale -a` shows `C`, `C.utf8`, `POSIX`); no

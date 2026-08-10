@@ -93,7 +93,7 @@ setup() {
     "TLD_ROOTFS_CONTAINER='tld-ubuntu'" \
     "TLD_ROOTFS_ARCH='aarch64'" \
     "TLD_ROOTFS_MIN_PROOT_DISTRO='5.5.0'" \
-    "TLD_GUEST_USER='tld'" > "$TLD_ROOTFS_ENV_FILE"
+    "TLD_GUEST_USER='root'" > "$TLD_ROOTFS_ENV_FILE"
 
   source "$TLD_LIB_DIR/tld-common.sh"
   source "$TLD_LIB_DIR/tld-guest.sh"
@@ -115,7 +115,7 @@ test_manifest_sha256() {
   [ "$TLD_ROOTFS_CONTAINER" = 'tld-ubuntu' ]
   [ "$TLD_ROOTFS_ARCH" = 'aarch64' ]
   [ "$TLD_ROOTFS_MIN_PROOT_DISTRO" = '5.5.0' ]
-  [ "$TLD_GUEST_USER" = 'tld' ]
+  [ "$TLD_GUEST_USER" = 'root' ]
   [ "$TLD_GUEST_PROOT_VERSION" = '5.5.0' ]
   [ "$TLD_GUEST_ROOTFS_DIR" = "$TLD_TEST_ROOTFS_DIR" ]
   [ "$TLD_GUEST_MANIFEST_FILE" = "$TLD_TEST_MANIFEST_FILE" ]
@@ -129,7 +129,7 @@ test_manifest_sha256() {
     "TLD_ROOTFS_CONTAINER='tld-ubuntu'" \
     "TLD_ROOTFS_ARCH='aarch64'" \
     "TLD_ROOTFS_MIN_PROOT_DISTRO='5.5.0'" \
-    "TLD_GUEST_USER='tld'" > "$TLD_ROOTFS_ENV_FILE"
+    "TLD_GUEST_USER='root'" > "$TLD_ROOTFS_ENV_FILE"
 
   run tld_guest_install_rootfs
 
@@ -203,11 +203,9 @@ test_manifest_sha256() {
   expected_install='DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates dbus-user-session dbus-x11 file iproute2 procps thunar xfce4-panel xfce4-session xfce4-terminal xfdesktop4 xfwm4 x11-xserver-utils'
   grep -Fx -- "$expected_install" "$TLD_TEST_GUEST_COMMAND"
   ! grep -F -- 'apt-get install --no-install-recommends' "$TLD_TEST_GUEST_COMMAND"
-  [[ "$guest_command" == *'mkdir -p /home/tld'* ]]
-  [[ "$guest_command" == *'id -u tld'* ]]
-  [[ "$guest_command" == *'useradd --create-home --home-dir /home/tld --shell /bin/bash tld'* ]]
-  [[ "$guest_command" == *'mkdir -p /home/tld/.config'* ]]
-  [[ "$guest_command" == *'chown -R tld:tld /home/tld'* ]]
+  [[ "$guest_command" == *'mkdir -p /root/.config'* ]]
+  [[ "$guest_command" == *'chown -R root:root /root'* ]]
+  [[ "$guest_command" != *'useradd'* ]]
   [[ "$guest_command" != *'apt-get upgrade'* ]]
   [[ "$(<"$TLD_TEST_CALL_LOG")" == *'proot-distro login tld-ubuntu -- /bin/bash -lc'* ]]
 }

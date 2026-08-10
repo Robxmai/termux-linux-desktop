@@ -123,7 +123,7 @@ setup() {
     "TLD_ROOTFS_CONTAINER='tld-ubuntu'" \
     "TLD_ROOTFS_ARCH='aarch64'" \
     "TLD_ROOTFS_MIN_PROOT_DISTRO='5.5.0'" \
-    "TLD_GUEST_USER='tld'" \
+    "TLD_GUEST_USER='root'" \
     > "$TLD_TEST_ROOTFS_ENV_FILE"
 }
 
@@ -245,7 +245,7 @@ write_owner_sentinel() {
     'DISPLAY_DEFAULT=:0'
     'PULSE_SERVER_DEFAULT=tcp:127.0.0.1:4713'
     'GUEST_CONTAINER=tld-ubuntu'
-    'GUEST_USER=tld'
+    'GUEST_USER=root'
     'REQUIRES_GPU=false'
     'REQUIRES_WINE=false'
   )

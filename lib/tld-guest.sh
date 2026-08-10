@@ -129,7 +129,7 @@ _tld_guest_load_rootfs_env() {
     "${TLD_ROOTFS_CONTAINER-}" != 'tld-ubuntu' ||
     "${TLD_ROOTFS_ARCH-}" != 'aarch64' ||
     "${TLD_ROOTFS_MIN_PROOT_DISTRO-}" != '5.5.0' ||
-    "${TLD_GUEST_USER-}" != 'tld' ]]; then
+    "${TLD_GUEST_USER-}" != 'root' ]]; then
     _tld_guest_error "rootfs environment is not the pinned Ubuntu 24.04 configuration: $env_file"
     return 1
   fi
@@ -437,12 +437,8 @@ tld_guest_provision() {
   guest_command+=$'  libvulkan1:arm64 vulkan-tools:arm64 mesa-vulkan-drivers:arm64 libgl1-mesa-dri:arm64 libglx-mesa0:arm64 libegl-mesa0:arm64 libgl1:arm64 libgles2:arm64 libgbm1:arm64 mesa-utils:arm64\n'
   # Ubuntu winetricks recommends the ARMHF Wine stack, which conflicts with the ARM64 Turnip ICD.
   guest_command+=$'DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends winetricks\n'
-  guest_command+="mkdir -p /home/$TLD_GUEST_USER"$'\n'
-  guest_command+="if ! id -u $TLD_GUEST_USER >/dev/null 2>&1; then"$'\n'
-  guest_command+="  useradd --create-home --home-dir /home/$TLD_GUEST_USER --shell /bin/bash $TLD_GUEST_USER"$'\n'
-  guest_command+=$'fi\n'
-  guest_command+="mkdir -p /home/$TLD_GUEST_USER/.config"$'\n'
-  guest_command+="chown -R $TLD_GUEST_USER:$TLD_GUEST_USER /home/$TLD_GUEST_USER"$'\n'
+  guest_command+="mkdir -p /root/.config"$'\n'
+  guest_command+="chown -R root:root /root"$'\n'
   if _tld_guest_login_script "$guest_command"; then
     result=0
   else

@@ -37,7 +37,7 @@ setup() {
     "TLD_ROOTFS_CONTAINER='tld-ubuntu'" \
     "TLD_ROOTFS_ARCH='aarch64'" \
     "TLD_ROOTFS_MIN_PROOT_DISTRO='5.5.0'" \
-    "TLD_GUEST_USER='tld'" \
+    "TLD_GUEST_USER='root'" \
     > "$TLD_ROOTFS_ENV_FILE"
 
   printf '%s\n' \
