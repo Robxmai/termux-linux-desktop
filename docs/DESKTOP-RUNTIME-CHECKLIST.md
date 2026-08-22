@@ -65,6 +65,13 @@ native Linux support.
 - [ ] File management is installed and usable: `thunar`, `file-roller`,
       `gvfs`, `gvfs-backends`, and `udisks2` where the PRoot environment can
       use them.
+- [ ] Debian package management is installed and usable: `dpkg`, `dpkg-deb`,
+      and `apt-get` resolve from `PATH`.
+- [ ] `application/vnd.debian.binary-package` and `application/x-deb` default
+      to the desktop Debian installer, not File Roller or an archive viewer.
+- [ ] Double-clicking a valid `.deb` opens a terminal confirmation and runs
+      `apt-get install -y ./package.deb`, including dependency resolution; the
+      handler rejects invalid package files without changing system state.
 - [ ] Web browsing is installed and usable: Firefox ESR with its desktop entry,
       certificates, fonts, multimedia libraries, and download integration.
 - [ ] Office and document tools are installed: LibreOffice, a PDF viewer such
@@ -85,6 +92,16 @@ native Linux support.
       the intended user and survive desktop restart.
 - [ ] The tablet can open, edit, save, copy, move, archive, download, and
       upload ordinary files through the desktop without WoW installed.
+- [ ] A valid local `.deb` passes `dpkg-deb --info` and
+      `apt-get install --simulate ./package.deb`; the live install path is
+      tested separately with an approved package.
+- [ ] `GPUInfo` is present in the XFCE Applications menu and taskbar and runs
+      against the managed Wine prefix without triggering a second Mono setup.
+- [ ] `Wine Configuration` is present in the XFCE Applications menu and opens
+      `winecfg` against the managed Wine prefix used by `.exe` launches.
+- [ ] `Wine Registry Editor` is present in the XFCE Applications menu and opens
+      `regedit` against that same prefix; `mscoree` is explicitly registered as
+      Wine builtin and is not disabled by the runtime environment.
 - [ ] The tablet can browse the web, play supported media, open PDFs, and
       create/edit office documents through the desktop without WoW installed.
 

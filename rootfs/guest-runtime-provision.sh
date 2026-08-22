@@ -217,7 +217,7 @@ configure_wine_registry() {
   [[ -x "$wine_bin" ]] || return 0
   [[ -d "$prefix" ]] || return 0
 
-  for dll in d3d9 d3d10core d3d11 dxgi ddraw dinput8; do
+  for dll in mscoree d3d9 d3d10core d3d11 dxgi ddraw dinput8; do
     env WINEPREFIX="$prefix" DISPLAY="${DISPLAY:-:0}" WINEDEBUG=-all \
       "$box64_bin" "$wine_bin" reg add "HKCU\\Software\\Wine\\DllOverrides\\$dll" /v "" /d builtin /f >/dev/null 2>&1 || true
   done
@@ -225,6 +225,14 @@ configure_wine_registry() {
     env WINEPREFIX="$prefix" DISPLAY="${DISPLAY:-:0}" WINEDEBUG=-all \
       "$box64_bin" "$wine_bin" reg add "HKCU\\Software\\Wine\\DllOverrides\\$dll" /v "" /d disabled /f >/dev/null 2>&1 || true
   done
+  # Wine 11.11 selects the X11 desktop driver from this display-device key;
+  # the HKCU Graphics value alone does not make winex11.drv load.
+  env WINEPREFIX="$prefix" DISPLAY="${DISPLAY:-:0}" WINEDEBUG=-all \
+    "$box64_bin" "$wine_bin" reg add "HKCU\\Software\\Wine\\Drivers" /v Graphics /d x11 /f >/dev/null 2>&1 || true
+  env WINEPREFIX="$prefix" DISPLAY="${DISPLAY:-:0}" WINEDEBUG=-all \
+    "$box64_bin" "$wine_bin" reg add "HKCU\\Software\\Wine\\X11 Driver" /v UseEGL /d N /f >/dev/null 2>&1 || true
+  env WINEPREFIX="$prefix" DISPLAY="${DISPLAY:-:0}" WINEDEBUG=-all \
+    "$box64_bin" "$wine_bin" reg add "HKLM\\System\\CurrentControlSet\\Control\\Video\\{00000000-0000-0000-0000-000000000000}\\0000" /v GraphicsDriver /d "C:\\windows\\system32\\winex11.drv" /f >/dev/null 2>&1 || true
   env WINEPREFIX="$prefix" DISPLAY="${DISPLAY:-:0}" WINEDEBUG=-all \
     "$box64_bin" "$wine_bin" reg add "HKCU\\Environment" /v TEMP /d "C:\\users\\$GUEST_USER\\AppData\\Local\\Temp" /f >/dev/null 2>&1 || true
   env WINEPREFIX="$prefix" DISPLAY="${DISPLAY:-:0}" WINEDEBUG=-all \
@@ -233,7 +241,7 @@ configure_wine_registry() {
     "$box64_bin" "$wine_bin" reg add "HKCU\\Environment" /v DISPLAY /d ":0" /f >/dev/null 2>&1 || true
   env WINEPREFIX="$prefix" DISPLAY="${DISPLAY:-:0}" WINEDEBUG=-all \
     "$box64_bin" "$wine_bin" reg add "HKCU\\Environment" /v PULSE_SERVER /d "tcp:127.0.0.1:4713" /f >/dev/null 2>&1 || true
-  log "wine registry configured: wined3d builtin overrides + environment"
+  log "wine registry configured: wined3d builtin overrides + X11/GLX driver + environment"
   return 0
 }
 
@@ -367,7 +375,7 @@ write_runtime_configs() {
 WOW_PERFORMANCE_PROFILE=msaa-off
 WOW_DXVK_CONFIG_FILE=/usr/local/etc/dxvk.conf
 WOW_GX_MULTISAMPLE=0
-WOW_TU_DEBUG=noconform
+WOW_TU_DEBUG=noconform,noubwc
 WOW_MESA_VK_WSI_PRESENT_MODE=mailbox
 WOW_MESA_VK_WSI_USE_HWBUF=1
 WOW_WINEESYNC=0
@@ -407,6 +415,8 @@ EOF
   cat > "$wine_env" <<'EOF'
 #!/usr/bin/env bash
 # Shared, conservative runtime defaults for every Wine/Box64 application.
+export WINEPREFIX="${WINEPREFIX:-/root/wine-runtime-prefix}"
+export WINE_MONO_CACHE_DIR="${WINE_MONO_CACHE_DIR:-/root/runtime-cache}"
 export DISPLAY="${DISPLAY:-:0}"
 export PULSE_SERVER="${PULSE_SERVER:-tcp:127.0.0.1:4713}"
 
@@ -427,7 +437,7 @@ export DXVK_CONFIG_FILE="${DXVK_CONFIG_FILE:-/usr/local/etc/dxvk.conf}"
 export XCURSOR_SIZE="${XCURSOR_SIZE:-24}"
 export XCURSOR_THEME="${XCURSOR_THEME:-xcursor-fix}"
 
-: "${WINEDLLOVERRIDES:=d3d9=n,d3d10core=n,d3d11=n,dxgi=n,ddraw=n,winemac.drv=d,winewayland.drv=d}"
+: "${WINEDLLOVERRIDES:=mscoree=b,d3d9=n,d3d10core=n,d3d11=n,dxgi=n,ddraw=n,winemac.drv=d,winewayland.drv=d}"
 export WINEDLLOVERRIDES
 EOF
 
@@ -622,7 +632,7 @@ fi
 WOW_PERFORMANCE_PROFILE="${WOW_PERFORMANCE_PROFILE:-baseline}"
 WOW_DXVK_CONFIG_FILE="${WOW_DXVK_CONFIG_FILE:-/usr/local/etc/dxvk.conf}"
 WOW_GX_MULTISAMPLE="${WOW_GX_MULTISAMPLE:-0}"
-WOW_TU_DEBUG="${WOW_TU_DEBUG:-noconform}"
+WOW_TU_DEBUG="${WOW_TU_DEBUG:-noconform,noubwc}"
 WOW_MESA_VK_WSI_PRESENT_MODE="${WOW_MESA_VK_WSI_PRESENT_MODE:-mailbox}"
 WOW_MESA_VK_WSI_USE_HWBUF="${WOW_MESA_VK_WSI_USE_HWBUF:-1}"
 WOW_WINEESYNC="${WOW_WINEESYNC:-0}"
@@ -669,7 +679,7 @@ export DXVK_STATE_CACHE_PATH=/tmp/dxvk-cache
 export DXVK_STATE_CACHE=1
 export MESA_EXTENSION_MAX_YEAR=2003
 export force_s3tc_enable=true
-export WINEDLLOVERRIDES="d3d9=n,d3d10core=n,d3d11=n,dxgi=n,ddraw=n,winemac.drv=d,winewayland.drv=d"
+export WINEDLLOVERRIDES="mscoree=b,d3d9=n,d3d10core=n,d3d11=n,dxgi=n,ddraw=n,winemac.drv=d,winewayland.drv=d"
 export PULSE_SINK="AAudio_sink"
 export PULSE_LATENCY_MSEC=60
 export WINEDEBUG="${WINEDEBUG:--all}"
@@ -771,8 +781,9 @@ write_desktop_shortcuts() {
   local home="/root"
   local cfg="$home/.config"
   local panel="$cfg/xfce4/panel"
+  local apps_dir="$home/.local/share/applications"
 
-  mkdir -p "$cfg/xfce4" "$panel/launcher-17" "$panel/launcher-18" "$panel/launcher-19"
+  mkdir -p "$cfg/xfce4" "$panel/launcher-17" "$panel/launcher-18" "$panel/launcher-19" "$panel/launcher-21" "$apps_dir"
 
   # XFCE helpers: makes exo-open based panel buttons resolve to real apps
   cat > "$cfg/xfce4/helpers.rc" <<'EOF'
@@ -820,8 +831,139 @@ Categories=Network;WebBrowser;
 MimeType=text/html;text/xml;application/xhtml+xml;x-scheme-handler/http;x-scheme-handler/https;
 EOF
 
-  chown -R "$GUEST_USER:$GUEST_USER" "$cfg/xfce4/panel" "$cfg/xfce4/helpers.rc" 2>/dev/null || true
-  log "desktop shortcuts written"
+  cat > /usr/local/bin/gpuinfo <<'EOF'
+#!/usr/bin/env bash
+# Launch the native GPUInfo diagnostic with the managed Wine prefix.
+set -Eeuo pipefail
+
+BOX64_BIN="${BOX64_BIN:-/usr/local/bin/box64}"
+WINE_BIN="${WINE_BIN:-/opt/wine-runtime/wine-11.11-amd64-wow64/bin/wine}"
+GPUINFO_PREFIX="${GPUINFO_PREFIX:-/root/wine-runtime-prefix}"
+
+[[ -x "$BOX64_BIN" ]] || { printf 'box64 not found: %s\n' "$BOX64_BIN" >&2; exit 1; }
+[[ -x "$WINE_BIN" ]] || { printf 'wine not found: %s\n' "$WINE_BIN" >&2; exit 1; }
+[[ -f /opt/apps/GPUInfo.exe ]] || { printf 'GPUInfo.exe is not installed\n' >&2; exit 1; }
+
+export DISPLAY="${DISPLAY:-:0}"
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp}"
+export WINEPREFIX="$GPUINFO_PREFIX"
+export LIBGL_ALWAYS_SOFTWARE="${LIBGL_ALWAYS_SOFTWARE:-0}"
+export GALLIUM_DRIVER="${GALLIUM_DRIVER:-zink}"
+export WINEDLLOVERRIDES="${WINEDLLOVERRIDES:-mscoree=b,d3d9=b,d3d10core=b,d3d11=b,dxgi=b,ddraw=b,winemac.drv=d,winewayland.drv=d}"
+export WINEESYNC=0
+export WINEFSYNC=0
+export WINEDEBUG="${WINEDEBUG:--all}"
+
+if [[ ! -f "$WINEPREFIX/system.reg" ]]; then
+  mkdir -p "$WINEPREFIX"
+  timeout 120 "$BOX64_BIN" "$WINE_BIN" wineboot --init >/dev/null 2>&1 || true
+fi
+[[ -f "$WINEPREFIX/system.reg" ]] || { printf 'GPUInfo Wine prefix could not be initialized\n' >&2; exit 1; }
+
+exec "$BOX64_BIN" "$WINE_BIN" /opt/apps/GPUInfo.exe "$@"
+EOF
+  chmod 0755 /usr/local/bin/gpuinfo
+
+  cat > /usr/local/bin/winecfg <<'EOF'
+#!/usr/bin/env bash
+# Open Wine Configuration for the same prefix used by wine-exe.
+set -Eeuo pipefail
+
+BOX64_BIN="${BOX64_BIN:-/usr/local/bin/box64}"
+WINE_BIN="${WINE_BIN:-/opt/wine-runtime/wine-11.11-amd64-wow64/bin/wine}"
+
+[[ -x "$BOX64_BIN" ]] || { printf 'box64 not found: %s\n' "$BOX64_BIN" >&2; exit 1; }
+[[ -x "$WINE_BIN" ]] || { printf 'wine not found: %s\n' "$WINE_BIN" >&2; exit 1; }
+[[ -f "${WINEPREFIX:-/root/wine-runtime-prefix}/system.reg" ]] || {
+  printf 'Wine prefix is not initialized: %s\n' "${WINEPREFIX:-/root/wine-runtime-prefix}" >&2
+  exit 1
+}
+
+export WINEPREFIX="${WINEPREFIX:-/root/wine-runtime-prefix}"
+export DISPLAY="${DISPLAY:-:0}"
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp}"
+export WINEDLLOVERRIDES="${WINEDLLOVERRIDES:-mscoree=b}"
+export WINEDEBUG="${WINEDEBUG:--all}"
+exec "$BOX64_BIN" "$WINE_BIN" winecfg "$@"
+EOF
+  chmod 0755 /usr/local/bin/winecfg
+
+  cat > /usr/local/bin/winereg <<'EOF'
+#!/usr/bin/env bash
+# Open Wine Registry Editor for the managed Wine prefix.
+set -Eeuo pipefail
+
+BOX64_BIN="${BOX64_BIN:-/usr/local/bin/box64}"
+WINE_BIN="${WINE_BIN:-/opt/wine-runtime/wine-11.11-amd64-wow64/bin/wine}"
+WINEPREFIX="${WINEPREFIX:-/root/wine-runtime-prefix}"
+
+[[ -x "$BOX64_BIN" ]] || { printf 'box64 not found: %s\n' "$BOX64_BIN" >&2; exit 1; }
+[[ -x "$WINE_BIN" ]] || { printf 'wine not found: %s\n' "$WINE_BIN" >&2; exit 1; }
+[[ -f "$WINEPREFIX/system.reg" ]] || { printf 'Wine prefix is not initialized: %s\n' "$WINEPREFIX" >&2; exit 1; }
+
+export DISPLAY="${DISPLAY:-:0}"
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp}"
+export WINEPREFIX
+export WINEDEBUG="${WINEDEBUG:--all}"
+export WINEDLLOVERRIDES="${WINEDLLOVERRIDES:-mscoree=b}"
+exec "$BOX64_BIN" "$WINE_BIN" regedit "$@"
+EOF
+  chmod 0755 /usr/local/bin/winereg
+
+  cat > "$apps_dir/GPUInfo.desktop" <<'EOF'
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=GPUInfo
+GenericName=GPU Diagnostic
+Comment=Inspect the active Wine OpenGL/Vulkan renderer
+Exec=/usr/local/bin/gpuinfo
+Icon=applications-graphics
+Terminal=false
+Categories=System;Graphics;Utility;
+StartupNotify=true
+StartupWMClass=GPUInfo.exe
+NoDisplay=false
+EOF
+  chmod 0644 "$apps_dir/GPUInfo.desktop"
+  cp "$apps_dir/GPUInfo.desktop" "$panel/launcher-21/17859613905.desktop"
+  chmod 0644 "$panel/launcher-21/17859613905.desktop"
+
+  cat > "$apps_dir/winecfg.desktop" <<'EOF'
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Wine Configuration
+GenericName=Wine Settings
+Comment=Adjust Wine settings for the managed Windows prefix
+Exec=/usr/local/bin/winecfg
+Icon=wine
+Terminal=false
+Categories=Settings;System;
+StartupNotify=true
+NoDisplay=false
+EOF
+  chmod 0644 "$apps_dir/winecfg.desktop"
+
+  cat > "$apps_dir/winereg.desktop" <<'EOF'
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Wine Registry Editor
+GenericName=Wine Registry Settings
+Comment=Edit the managed Wine registry
+Exec=/usr/local/bin/winereg
+Icon=wine
+Terminal=false
+Categories=Settings;System;
+StartupNotify=true
+NoDisplay=false
+EOF
+  chmod 0644 "$apps_dir/winereg.desktop"
+  update-desktop-database "$apps_dir" >/dev/null 2>&1 || true
+
+  chown -R "$GUEST_USER:$GUEST_USER" "$cfg/xfce4/panel" "$cfg/xfce4/helpers.rc" "$apps_dir/GPUInfo.desktop" "$apps_dir/winecfg.desktop" "$apps_dir/winereg.desktop" 2>/dev/null || true
+  log "desktop shortcuts, GPUInfo, Wine Configuration, and Registry Editor launchers written"
   return 0
 }
 
@@ -844,6 +986,10 @@ WOW_GAME_DIR="${WOW_GAME_DIR:-/data/data/com.termux/files/home/WoW 3.3.5a}"
 BOX64_BIN="${BOX64_BIN:-/usr/local/bin/box64}"
 WINE_BIN="${WINE_BIN:-/opt/wine-runtime/wine-11.11-amd64-wow64/bin/wine}"
 WINEPREFIX_DEFAULT="${WINEPREFIX_DEFAULT:-/root/wine-runtime-prefix}"
+GLADIO_HOST_BIN="${GLADIO_HOST_BIN:-/data/data/com.termux/files/home/gladio-linux/host-build/gladio-host}"
+GLADIO_CLIENT_BUILD="${GLADIO_CLIENT_BUILD:-/data/data/com.termux/files/home/gladio-tunnel-build/client-build-glibc}"
+GLADIO_SOCKET="${GLADIO_SOCKET:-/data/data/com.termux/files/home/gladio-tunnel-build/runtime/gladio-wine.sock}"
+GLADIO_LOG="${GLADIO_LOG:-/data/data/com.termux/files/home/gladio-tunnel-build/runtime/gladio-wine-host.log}"
 
 if [[ $# -lt 1 ]]; then
   echo "usage: wine-exe <path-to-exe> [args...]" >&2
@@ -866,13 +1012,89 @@ export PULSE_SERVER="${PULSE_SERVER:-tcp:127.0.0.1:4713}"
 export PULSE_SINK="${PULSE_SINK:-AAudio_sink}"
 export PULSE_LATENCY_MSEC=60
 
-# wined3d: builtin D3D9/DXGI, software GL (llvmpipe) so no DRI3 is needed.
-export LIBGL_ALWAYS_SOFTWARE=1
-export GALLIUM_DRIVER=llvmpipe
+# Fast-start overlay: WINE_GLADIO_NO_DEVICE_SERVICES=1 runs Wine from a
+# disposable overlay prefix whose system.reg has the virtual device service
+# and enum sections (PlugPlay, winebus, wineusb, winebth, winehid) removed.
+# Those services block Wine's loader under PRoot for minutes. The production
+# prefix is never modified; the overlay is rebuilt only when system.reg
+# changes. Wine re-creates the service keys from the Enum entries at
+# shutdown, so the overlay system.reg is re-stripped on every launch.
+if [[ "${WINE_GLADIO_NO_DEVICE_SERVICES:-0}" == 1 ]]; then
+  if [[ -f "$WINEPREFIX/system.reg" ]]; then
+    prefix_hash="$(printf '%s' "$WINEPREFIX" | sha256sum | cut -c1-12)"
+    overlay="/root/wine-faststart-$prefix_hash"
+    source_hash="$(sha256sum "$WINEPREFIX/system.reg" | cut -d' ' -f1)"
+    source_mtime="$(stat -c %Y "$WINEPREFIX/system.reg")"
+    strip_devices() {
+      awk 'tolower($0) ~ /^\[[^]]*(plugplay|winebth|winebus|winehid|wineusb)[^]]*\]/ { skip=1; next }
+           skip && /^$/ { skip=0; next }
+           !skip { print }' "$1" > "$1.new" && mv "$1.new" "$1"
+    }
+    if [[ ! -f "$overlay/system.reg" || "$(cat "$overlay/.source-hash" 2>/dev/null || true)" != "$source_hash $source_mtime" ]]; then
+      rm -rf "$overlay"
+      mkdir -p "$overlay"
+      cp -p "$WINEPREFIX/system.reg" "$overlay/system.reg"
+      strip_devices "$overlay/system.reg"
+      cp -p "$WINEPREFIX/user.reg" "$overlay/user.reg" 2>/dev/null || true
+      cp -p "$WINEPREFIX/userdef.reg" "$overlay/userdef.reg" 2>/dev/null || true
+      cp -p "$WINEPREFIX/.update-timestamp" "$overlay/.update-timestamp" 2>/dev/null || true
+      cp -p "$WINEPREFIX/wineserver" "$overlay/wineserver" 2>/dev/null || true
+      for entry in "$WINEPREFIX"/*; do
+        name="$(basename "$entry")"
+        case "$name" in system.reg|user.reg|userdef.reg|.update-timestamp|wineserver) continue ;; esac
+        ln -s "$entry" "$overlay/$name" 2>/dev/null || true
+      done
+      printf '%s %s' "$source_hash" "$source_mtime" > "$overlay/.source-hash"
+    fi
+    strip_devices "$overlay/system.reg"
+    export WINEPREFIX="$overlay"
+    printf 'wine-exe: device services disabled, overlay prefix=%s\n' "$overlay" >&2
+  else
+    printf 'wine-exe: WINE_GLADIO_NO_DEVICE_SERVICES=1 ignored (no system.reg in %s)\n' "$WINEPREFIX" >&2
+  fi
+fi
+
 export WINEDLLOVERRIDES="${WINEDLLOVERRIDES:-d3d9=b,d3d10core=b,d3d11=b,dxgi=b,ddraw=b,winemac.drv=d,winewayland.drv=d}"
 export WINEESYNC=0
 export WINEFSYNC=0
 export WINEDEBUG="${WINEDEBUG:--all}"
+
+GLADIO_PRELOAD=""
+if [[ "${WINE_GLADIO:-0}" == 1 ]]; then
+  [[ -x "$GLADIO_HOST_BIN" ]] || { echo "gladio host not found: $GLADIO_HOST_BIN" >&2; exit 1; }
+  [[ -f "$GLADIO_CLIENT_BUILD/libGL.so.1" ]] || { echo "gladio guest client not found: $GLADIO_CLIENT_BUILD/libGL.so.1" >&2; exit 1; }
+
+  mkdir -p "${GLADIO_SOCKET%/*}" "${GLADIO_LOG%/*}"
+  # Loader diagnostics belong to the Wine child, not the Android host daemon.
+  unset LD_DEBUG LD_DEBUG_OUTPUT LD_PRELOAD BOX64_LD_PRELOAD
+  if [[ ! -S "$GLADIO_SOCKET" ]] || ! pgrep -x gladio-host >/dev/null 2>&1; then
+    if [[ -S "$GLADIO_SOCKET" ]] && pgrep -x gladio-host >/dev/null 2>&1; then
+      echo "gladio host is running without the expected socket: $GLADIO_SOCKET" >&2
+      exit 1
+    fi
+    rm -f "$GLADIO_SOCKET"
+    nohup env DISPLAY="$DISPLAY" GLADIO_SWAP_INTERVAL="${GLADIO_SWAP_INTERVAL:-0}" \
+      GALLIUM_DRIVER="${GLADIO_GALLIUM_DRIVER:-zink}" \
+      "$GLADIO_HOST_BIN" "$GLADIO_SOCKET" > "$GLADIO_LOG" 2>&1 < /dev/null &
+    gladio_host_pid="$!"
+    for _ in $(seq 1 30); do
+      [[ -S "$GLADIO_SOCKET" ]] && break
+      kill -0 "$gladio_host_pid" 2>/dev/null || break
+      sleep 0.5
+    done
+  fi
+  [[ -S "$GLADIO_SOCKET" ]] || { echo "gladio host did not create socket: $GLADIO_SOCKET" >&2; cat "$GLADIO_LOG" >&2 || true; exit 1; }
+
+  unset LIBGL_ALWAYS_SOFTWARE GALLIUM_DRIVER MESA_LOADER_DRIVER_OVERRIDE
+  export GLADIO_X11_SERVER_PATH="$GLADIO_SOCKET"
+  export LD_LIBRARY_PATH="$GLADIO_CLIENT_BUILD${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+  GLADIO_PRELOAD="${GLADIO_WINE_PRELOAD:-$GLADIO_CLIENT_BUILD/libGL.so.1}"
+  printf 'wine-exe: renderer=gladio exe=%s socket=%s\n' "$EXE_PATH" "$GLADIO_SOCKET" >&2
+else
+  # wined3d fallback: software GL (llvmpipe) so no DRI3 is needed.
+  export LIBGL_ALWAYS_SOFTWARE=1
+  export GALLIUM_DRIVER=llvmpipe
+fi
 
 # Single-instance guard: never start a second copy of the same exe, or two
 # WoW instances share one prefix and produce a black fullscreen window.
@@ -885,7 +1107,11 @@ if pgrep -f "wine-11\.11-amd64-wow64/bin/wine .*${EXE_BASE}" > /dev/null 2>&1; t
 fi
 
 cd "$(dirname "$EXE_PATH")"
-exec ionice -c 2 -n 0 "$BOX64_BIN" "$WINE_BIN" "$EXE_PATH" "$@"
+wine_env=()
+if [[ -n "$GLADIO_PRELOAD" ]]; then
+  wine_env+=("BOX64_LIBGL=$GLADIO_PRELOAD" "BOX64_LD_PRELOAD=$GLADIO_PRELOAD")
+fi
+exec ionice -c 2 -n 0 env "${wine_env[@]}" "$BOX64_BIN" "$WINE_BIN" "$EXE_PATH" "$@"
 EOF
   chmod 0755 /usr/local/bin/wine-exe
 
@@ -937,9 +1163,104 @@ EOFS
   write_shortcut "World of Warcraft" "Wow.exe" "Launch WoW through Wine (wined3d)"
   write_shortcut "WoW Repair" "Repair.exe" "WoW repair utility (wined3d)"
   write_shortcut "WoW Error" "WowError.exe" "WoW error reporter (wined3d)"
+  cat > "$desktop_dir/WoW Gladio Fast Start.desktop" <<EOFS
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=WoW (Gladio Fast Start)
+GenericName=World of Warcraft
+Comment=Launch WoW with the Gladio renderer, GPU (zink) and fast-start overlay
+Exec=env WINE_GLADIO=1 WINE_GLADIO_NO_DEVICE_SERVICES=1 GALLIUM_DRIVER=zink /usr/local/bin/wine-exe "$game_dir/Wow.exe"
+Icon=applications-games
+Terminal=false
+Categories=Game;Utility;
+StartupNotify=false
+EOFS
+  chmod 0755 "$desktop_dir/WoW Gladio Fast Start.desktop"
+  cp "$desktop_dir/WoW Gladio Fast Start.desktop" "$apps_dir/WoW Gladio Fast Start.desktop"
 
   chown -R "$GUEST_USER:$GUEST_USER" "$desktop_dir" "$apps_dir" "$guest_home/.config/mimeapps.list" 2>/dev/null || true
   log "wine-exe launcher, .exe association, and WoW shortcuts written"
+  return 0
+}
+
+# -------------------------------------------------------- Debian packages
+write_deb_package_handler() {
+  local guest_home="/root"
+  local apps_dir="$guest_home/.local/share/applications"
+  local mime_file="$guest_home/.config/mimeapps.list"
+
+  mkdir -p /usr/local/bin "$apps_dir" "${mime_file%/*}"
+
+  cat > /usr/local/bin/deb-install <<'EOF'
+#!/usr/bin/env bash
+# Install one Debian package through apt with an explicit terminal confirmation.
+set -Eeuo pipefail
+
+if (( $# != 1 )); then
+  printf 'usage: deb-install /path/to/package.deb\n' >&2
+  exit 2
+fi
+
+DEB_PATH="$1"
+[[ -f "$DEB_PATH" ]] || {
+  printf 'package file not found: %s\n' "$DEB_PATH" >&2
+  exit 1
+}
+dpkg-deb --info "$DEB_PATH" >/dev/null 2>&1 || {
+  printf 'not a valid Debian package: %s\n' "$DEB_PATH" >&2
+  exit 1
+}
+[[ -t 0 && -t 1 ]] || {
+  printf 'open the package from the desktop, or run this command in a terminal\n' >&2
+  exit 1
+}
+
+DEB_PATH="$(readlink -f -- "$DEB_PATH")"
+printf 'Package: %s\n' "$(dpkg-deb --field "$DEB_PATH" Package)"
+printf 'Version: %s\n' "$(dpkg-deb --field "$DEB_PATH" Version)"
+printf 'This runs the package maintainer scripts as root inside the guest.\n'
+printf 'Install this package and resolve dependencies? [y/N] '
+read -r answer
+case "${answer,,}" in
+  y|yes) ;;
+  *) printf 'Installation cancelled.\n'; exit 0 ;;
+esac
+
+cd "$(dirname -- "$DEB_PATH")"
+exec apt-get install -y "./$(basename -- "$DEB_PATH")"
+EOF
+  chmod 0755 /usr/local/bin/deb-install
+
+  cat > "$apps_dir/deb-install.desktop" <<'EOF'
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Install Debian Package
+GenericName=Package Installer
+Comment=Install a Debian package with apt
+Exec=/usr/local/bin/deb-install %f
+Icon=system-software-install
+Terminal=true
+Categories=System;PackageManager;
+MimeType=application/vnd.debian.binary-package;application/x-deb;
+NoDisplay=false
+EOF
+  chmod 0644 "$apps_dir/deb-install.desktop"
+
+  if [[ -f "$mime_file" ]]; then
+    sed -i '/^application\/vnd\.debian\.binary-package=/d;/^application\/x-deb=/d' "$mime_file"
+  fi
+  cat >> "$mime_file" <<'EOF'
+
+[Default Applications]
+application/vnd.debian.binary-package=deb-install.desktop
+application/x-deb=deb-install.desktop
+EOF
+
+  update-desktop-database "$apps_dir" >/dev/null 2>&1 || true
+  chown -R "$GUEST_USER:$GUEST_USER" "$apps_dir" "$mime_file" 2>/dev/null || true
+  log "Debian package installer and .deb MIME associations written"
   return 0
 }
 
@@ -956,7 +1277,7 @@ setup_vnc_password() {
 # ------------------------------------------------------------------- main
 main() {
   local component skip_var
-  for component in packages box64 turnip wine wine_components runtime_libs dxvk firefox diag configs locale wine_registry wine_exe shortcuts vncpass compositor; do
+  for component in packages box64 turnip wine wine_components runtime_libs dxvk firefox diag configs locale wine_registry wine_exe deb_handler shortcuts vncpass compositor; do
     skip_var="TLD_SKIP_$component"
     if [[ -n "${!skip_var:-}" ]]; then
       log "skipping $component"
@@ -982,6 +1303,7 @@ main() {
       locale)   configure_locale ;;
       wine_registry) configure_wine_registry ;;
       wine_exe) write_wine_exe_launcher ;;
+      deb_handler) write_deb_package_handler ;;
       shortcuts) write_desktop_shortcuts ;;
       vncpass)  setup_vnc_password ;;
       compositor) configure_xfce_compositor ;;

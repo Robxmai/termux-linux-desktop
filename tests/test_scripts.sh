@@ -83,11 +83,42 @@ done
 if ! grep -q 'firefox-esr' <<< "$TLD_RUNTIME_TEXT"; then
   tld_check_fail 'Firefox ESR runtime provisioning is missing'
 fi
+for TLD_DEB_CHECK in \
+  write_deb_package_handler \
+  'dpkg-deb --info' \
+  'apt-get install -y' \
+  'application/vnd.debian.binary-package=deb-install.desktop' \
+  'application/x-deb=deb-install.desktop' \
+  '/usr/local/bin/gpuinfo' \
+  '/usr/local/bin/winecfg' \
+  '/usr/local/bin/winereg' \
+  'GPUInfo.desktop' \
+  'winecfg.desktop' \
+  'winereg.desktop' \
+  'mscoree=b' \
+  'launcher-21'; do
+  if ! grep -q -- "$TLD_DEB_CHECK" <<< "$TLD_RUNTIME_TEXT"; then
+    tld_check_fail "Debian package installer provisioning is missing: $TLD_DEB_CHECK"
+  fi
+done
 for TLD_WINE_COMPONENT in 'wine-mono-$mono_version-x86.msi' 'wine-gecko-$gecko_version-x86.msi' 'wine-gecko-$gecko_version-x86_64.msi'; do
   if ! grep -q -- "$TLD_WINE_COMPONENT" "$TLD_RUNTIME_PROVISION"; then
     tld_check_fail "Wine component provisioning is missing: $TLD_WINE_COMPONENT"
   fi
 done
+for TLD_GLADIO_REG_CHECK in \
+  'HKCU\\Software\\Wine\\Drivers' \
+  'HKCU\\Software\\Wine\\X11 Driver' \
+  'HKLM\\System\\CurrentControlSet\\Control\\Video' \
+  'GraphicsDriver' \
+  'winex11.drv'; do
+  if ! grep -Fq -- "$TLD_GLADIO_REG_CHECK" "$TLD_RUNTIME_PROVISION"; then
+    tld_check_fail "Wine Gladio registry provisioning is missing: $TLD_GLADIO_REG_CHECK"
+  fi
+done
+if ! grep -q 'WINE_GLADIO_NO_DEVICE_SERVICES' "$TLD_RUNTIME_PROVISION"; then
+  tld_check_fail "Wine fast-start overlay flag is missing from provisioning"
+fi
 for TLD_WINE_FETCH_CHECK in 'wine-mono/$mono_version' 'wine-gecko/$gecko_version' 'TLD_WINE_MONO_VERSION' 'TLD_WINE_GECKO_VERSION'; do
   if ! grep -q -- "$TLD_WINE_FETCH_CHECK" "$TLD_WINE_RUNTIME"; then
     tld_check_fail "Wine runtime fetch is missing: $TLD_WINE_FETCH_CHECK"
@@ -104,7 +135,7 @@ TLD_DOCTOR="$TLD_REPO_ROOT/bin/desktop-doctor"
 for TLD_DOCTOR_CHECK in \
   _tld_doctor_full_desktop 'mono --version' 'dotnet --list-runtimes' \
   'TLD_WINE_PREFIX' 'wine-runtime-prefix' 'wine_gecko/VERSION' runtime profile_version \
-  libreoffice xfce4-session dbus-run-session; do
+  libreoffice xfce4-session dbus-run-session dpkg-deb deb-install.desktop; do
   if ! grep -q -- "$TLD_DOCTOR_CHECK" "$TLD_DOCTOR"; then
     tld_check_fail "desktop doctor check is missing: $TLD_DOCTOR_CHECK"
   fi

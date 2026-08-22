@@ -171,6 +171,8 @@ _tld_doctor_full_desktop() {
     for command_name in \
       startxfce4 xfce4-session xfce4-panel xfdesktop xfwm4 xfce4-terminal \
       thunar dbus-run-session libreoffice evince mpv ffmpeg firefox \
+      dpkg dpkg-deb apt-get \
+      gpuinfo winecfg \
       python3 perl node npm ruby php go rustc cargo java mono dotnet \
       box64 box86 vulkaninfo pactl; do
       command -v "$command_name" >/dev/null 2>&1 || {
@@ -186,6 +188,14 @@ _tld_doctor_full_desktop() {
     test -f "$TLD_WINE_PREFIX/drive_c/windows/system32/gecko/2.47.4/wine_gecko/VERSION"
     test -f "$TLD_WINE_PREFIX/drive_c/windows/syswow64/gecko/2.47.4/wine_gecko/VERSION"
     test -x /usr/local/bin/firefox
+    test -x /usr/local/bin/deb-install
+    test -f /root/.local/share/applications/deb-install.desktop
+    test -f /root/.local/share/applications/GPUInfo.desktop
+    test -f /root/.local/share/applications/winecfg.desktop
+    test -f /root/.local/share/applications/winereg.desktop
+    test -f /root/.config/xfce4/panel/launcher-21/17859613905.desktop
+    grep -q "^application/vnd.debian.binary-package=deb-install.desktop$" /root/.config/mimeapps.list
+    grep -q "^application/x-deb=deb-install.desktop$" /root/.config/mimeapps.list
   '; then
     printf 'PASS full desktop container=%s runtimes=complete\n' "$container"
     return 0
