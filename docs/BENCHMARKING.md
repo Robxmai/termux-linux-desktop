@@ -94,3 +94,55 @@ Conclusions:
 5. wined3d (CPU-bound translation) could not be tested - the container has no
    GL driver stack (Turnip is Vulkan-only). Future work: zink-on-turnip or
    llvmpipe to build a translation-heavy benchmark.
+## Phase 2 findings (2026-08-22 later session)
+
+### Turnip 25.2.8 retest — still incompatible
+Swapped in the official Ubuntu `mesa-vulkan-drivers` 25.2.8 Turnip build:
+both chained runs exited rc=1 with no swapchain frames (window creation OK).
+The 24.1.0 pin remains required with custom termux-x11. Re-test again when
+Mesa/termux-x11 upstream moves.
+
+### Real-game validation — PASS with Audio=null
+Production launcher (`wow-launcher-dxvk-stable`, stable profile) ran the real
+17 GB Wow.exe install: DXVK swapchain came up at 3048×1903 and the game ran
+the full supervised window. Without changes it aborted at audio init:
+`Assertion 'pd' failed ... pa_pdispatch_run()` (libpulse protocol mismatch
+between Wine's client lib and the Termux pulse server). Workaround applied to
+the production prefix:
+```bash
+wine reg add 'HKCU\Software\Wine\Drivers' /v Audio /d null /f
+```
+Re-enable sound later by setting the value back to `pulse` once the libpulse
+versions are aligned.
+
+### esync — not available
+Mainline Wine has no esync (Proton patch); this build only carries fsync
+strings, and fsync needs kernel ≥5.16 futex_waitv (tablet runs 5.15).
+Dead end without a custom Wine build or newer kernel.
+
+### GL stack — hardware zink works out of the box
+Mesa 25.2.8 DRI in the container exposes zink; `glxinfo -B` reports
+*zink Vulkan 1.3 (Turnip Adreno 740)*, direct rendering, accelerated.
+Consequence: **wined3d is viable over hardware GL**, and generic launchers
+should NOT force llvmpipe (older advice). `WINE_FORCE_SOFTWARE_GL=1` remains
+as opt-in fallback.
+
+### wined3d flag matrix — saturated
+Same 12-config protocol with `WINEDLLOVERRIDES=d3d9=b,n` over zink GL:
+all 24 measured runs completed the exe's full 1770-frame budget (rc=0,
+~29.5 fps effective — the workload finishes ~30 s sooner than under DXVK's
+sysmem-handicapped Turnip path, i.e. roughly 50% more throughput here), with
+zero variance across every flag combination. Two takeaways:
+* The smoke workload cannot resolve dynarec-flag differences on either
+  renderer; a heavier scene would be needed for that.
+* For D3D9 titles that tolerate wined3d, zink GL is a serious alternative to
+  DXVK+sysmem on this device — worth per-title A/B.
+* Notably, the `combo` flag stack that corrupted rendering under DXVK ran
+  clean on wined3d.
+
+### D7VK
+v2.1 x32 `ddraw.dll` staged at
+`/opt/d7vk/d7vk-v2.1/x32/` and installed into the test prefix
+(`drive_c/windows/syswow64/ddraw.dll`). Activate per-app with
+`WINEDLLOVERRIDES=ddraw=n`. No DDraw workload was available to validate
+in-session.
