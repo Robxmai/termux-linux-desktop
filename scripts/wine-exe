@@ -1,0 +1,164 @@
+#!/usr/bin/env bash
+# wine-exe — generic per-EXE launcher: run ANY Windows .exe through Box64 + Wine
+# (wined3d over zink-on-Turnip hardware GL by default; DXVK users: see wow-launch).
+#
+# Validated on: Xiaomi Pad 6 Pro S / SD 8+ Gen 1, Box64 0.4.5 Dynarec,
+# Wine 11.11 amd64-wow64, Turnip 24.1.0, Mesa 25.2.8 zink GL — see
+# docs/BENCHMARKING.md for the measured dynarec profile rationale.
+#
+# Optional integrations (all opt-in):
+#   WINE_GLADIO=1            route GL through a gladio host socket
+#   WINE_FORCE_SOFTWARE_GL=1 force llvmpipe instead of hardware zink GL
+#   WINE_GLADIO_NO_DEVICE_SERVICES=1  fast-start overlay prefix (strips PlugPlay etc)
+# Usage: wine-exe /path/to/Game.exe [args...]
+# (Wow.exe, Repair.exe, installers such as lark.exe, etc.).
+# Usage: wine-exe /path/to/Game.exe [args...]
+set -Eeuo pipefail
+
+WOW_GAME_DIR="${WOW_GAME_DIR:-/data/data/com.termux/files/home/WoW 3.3.5a}"
+BOX64_BIN="${BOX64_BIN:-/usr/local/bin/box64}"
+WINE_BIN="${WINE_BIN:-/opt/wine-runtime/wine-11.11-amd64-wow64/bin/wine}"
+WINEPREFIX_DEFAULT="${WINEPREFIX_DEFAULT:-/root/wine-runtime-prefix}"
+GLADIO_HOST_BIN="${GLADIO_HOST_BIN:-/data/data/com.termux/files/home/gladio-linux/host-build/gladio-host}"
+GLADIO_CLIENT_BUILD="${GLADIO_CLIENT_BUILD:-/data/data/com.termux/files/home/gladio-tunnel-build/client-build-glibc}"
+GLADIO_SOCKET="${GLADIO_SOCKET:-/data/data/com.termux/files/home/gladio-tunnel-build/runtime/gladio-wine.sock}"
+GLADIO_LOG="${GLADIO_LOG:-/data/data/com.termux/files/home/gladio-tunnel-build/runtime/gladio-wine-host.log}"
+
+if [[ $# -lt 1 ]]; then
+  echo "usage: wine-exe <path-to-exe> [args...]" >&2
+  exit 1
+fi
+EXE_PATH="${1-}"
+shift
+
+# Resolve bare names against the WoW game dir; absolute paths are used as-is,
+# so installers like /home/tld/Downloads/lark.exe work too.
+if [[ "$EXE_PATH" != /* && -f "$WOW_GAME_DIR/$EXE_PATH" ]]; then
+  EXE_PATH="$WOW_GAME_DIR/$EXE_PATH"
+fi
+[[ -f "$EXE_PATH" ]] || { echo "executable not found: $EXE_PATH" >&2; exit 1; }
+[[ -x "$BOX64_BIN" ]] || { echo "box64 not found: $BOX64_BIN" >&2; exit 1; }
+[[ -x "$WINE_BIN" ]] || { echo "wine not found: $WINE_BIN" >&2; exit 1; }
+
+export WINEPREFIX="${WINEPREFIX:-$WINEPREFIX_DEFAULT}"
+export DISPLAY="${DISPLAY:-:0}"
+export XAUTHORITY="${XAUTHORITY:-$HOME/.Xauthority}"
+export PULSE_SERVER="${PULSE_SERVER:-tcp:127.0.0.1:4713}"
+export PULSE_SINK="${PULSE_SINK:-AAudio_sink}"
+export PULSE_LATENCY_MSEC=60
+# Benchmark-validated Box64 dynarec profile (matrix 2026-08-22, docs/BENCHMARKING.md):
+# BIGBLOCK=1 SAFEFLAGS=2 WEAKBARRIER=1 CALLRET=1 is the fastest stable set;
+# BIGBLOCK>=2 / CALLRET=2 measured slower; aggressive stacks unstable on wow64.
+export BOX64_DYNAREC=${BOX64_DYNAREC:-1}
+export BOX64_DYNAREC_BIGBLOCK=${BOX64_DYNAREC_BIGBLOCK:-1}
+export BOX64_DYNAREC_SAFEFLAGS=${BOX64_DYNAREC_SAFEFLAGS:-2}
+export BOX64_DYNAREC_WEAKBARRIER=${BOX64_DYNAREC_WEAKBARRIER:-1}
+export BOX64_DYNAREC_CALLRET=${BOX64_DYNAREC_CALLRET:-1}
+export BOX64_DYNACACHE=${BOX64_DYNACACHE:-1}
+export BOX64_DYNACACHE_FOLDER=${BOX64_DYNACACHE_FOLDER:-/root/.cache/bdc/wine-exe}
+export BOX64_DYNACACHE_LIMIT=${BOX64_DYNACACHE_LIMIT:-2048}
+
+# Fast-start overlay: WINE_GLADIO_NO_DEVICE_SERVICES=1 runs Wine from a
+# disposable overlay prefix whose system.reg has the virtual device service
+# and enum sections (PlugPlay, winebus, wineusb, winebth, winehid) removed.
+# Those services block Wine's loader under PRoot for minutes. The production
+# prefix is never modified; the overlay is rebuilt only when system.reg
+# changes. Wine re-creates the service keys from the Enum entries at
+# shutdown, so the overlay system.reg is re-stripped on every launch.
+if [[ "${WINE_GLADIO_NO_DEVICE_SERVICES:-0}" == 1 ]]; then
+  if [[ -f "$WINEPREFIX/system.reg" ]]; then
+    prefix_hash="$(printf '%s' "$WINEPREFIX" | sha256sum | cut -c1-12)"
+    overlay="/root/wine-faststart-$prefix_hash"
+    source_hash="$(sha256sum "$WINEPREFIX/system.reg" | cut -d' ' -f1)"
+    source_mtime="$(stat -c %Y "$WINEPREFIX/system.reg")"
+    strip_devices() {
+      awk 'tolower($0) ~ /^\[[^]]*(plugplay|winebth|winebus|winehid|wineusb)[^]]*\]/ { skip=1; next }
+           skip && /^$/ { skip=0; next }
+           !skip { print }' "$1" > "$1.new" && mv "$1.new" "$1"
+    }
+    if [[ ! -f "$overlay/system.reg" || "$(cat "$overlay/.source-hash" 2>/dev/null || true)" != "$source_hash $source_mtime" ]]; then
+      rm -rf "$overlay"
+      mkdir -p "$overlay"
+      cp -p "$WINEPREFIX/system.reg" "$overlay/system.reg"
+      strip_devices "$overlay/system.reg"
+      cp -p "$WINEPREFIX/user.reg" "$overlay/user.reg" 2>/dev/null || true
+      cp -p "$WINEPREFIX/userdef.reg" "$overlay/userdef.reg" 2>/dev/null || true
+      cp -p "$WINEPREFIX/.update-timestamp" "$overlay/.update-timestamp" 2>/dev/null || true
+      cp -p "$WINEPREFIX/wineserver" "$overlay/wineserver" 2>/dev/null || true
+      for entry in "$WINEPREFIX"/*; do
+        name="$(basename "$entry")"
+        case "$name" in system.reg|user.reg|userdef.reg|.update-timestamp|wineserver) continue ;; esac
+        ln -s "$entry" "$overlay/$name" 2>/dev/null || true
+      done
+      printf '%s %s' "$source_hash" "$source_mtime" > "$overlay/.source-hash"
+    fi
+    strip_devices "$overlay/system.reg"
+    export WINEPREFIX="$overlay"
+    printf 'wine-exe: device services disabled, overlay prefix=%s\n' "$overlay" >&2
+  else
+    printf 'wine-exe: WINE_GLADIO_NO_DEVICE_SERVICES=1 ignored (no system.reg in %s)\n' "$WINEPREFIX" >&2
+  fi
+fi
+
+export WINEDLLOVERRIDES="${WINEDLLOVERRIDES:-d3d9=b,d3d10core=b,d3d11=b,dxgi=b,ddraw=b,winemac.drv=d,winewayland.drv=d}"
+export WINEESYNC=0
+export WINEFSYNC=0
+export WINEDEBUG="${WINEDEBUG:--all}"
+
+GLADIO_PRELOAD=""
+if [[ "${WINE_GLADIO:-0}" == 1 ]]; then
+  [[ -x "$GLADIO_HOST_BIN" ]] || { echo "gladio host not found: $GLADIO_HOST_BIN" >&2; exit 1; }
+  [[ -f "$GLADIO_CLIENT_BUILD/libGL.so.1" ]] || { echo "gladio guest client not found: $GLADIO_CLIENT_BUILD/libGL.so.1" >&2; exit 1; }
+
+  mkdir -p "${GLADIO_SOCKET%/*}" "${GLADIO_LOG%/*}"
+  # Loader diagnostics belong to the Wine child, not the Android host daemon.
+  unset LD_DEBUG LD_DEBUG_OUTPUT LD_PRELOAD BOX64_LD_PRELOAD
+  if [[ ! -S "$GLADIO_SOCKET" ]] || ! pgrep -x gladio-host >/dev/null 2>&1; then
+    if [[ -S "$GLADIO_SOCKET" ]] && pgrep -x gladio-host >/dev/null 2>&1; then
+      echo "gladio host is running without the expected socket: $GLADIO_SOCKET" >&2
+      exit 1
+    fi
+    rm -f "$GLADIO_SOCKET"
+    nohup env DISPLAY="$DISPLAY" GLADIO_SWAP_INTERVAL="${GLADIO_SWAP_INTERVAL:-0}" \
+      GALLIUM_DRIVER="${GLADIO_GALLIUM_DRIVER:-zink}" \
+      "$GLADIO_HOST_BIN" "$GLADIO_SOCKET" > "$GLADIO_LOG" 2>&1 < /dev/null &
+    gladio_host_pid="$!"
+    for _ in $(seq 1 30); do
+      [[ -S "$GLADIO_SOCKET" ]] && break
+      kill -0 "$gladio_host_pid" 2>/dev/null || break
+      sleep 0.5
+    done
+  fi
+  [[ -S "$GLADIO_SOCKET" ]] || { echo "gladio host did not create socket: $GLADIO_SOCKET" >&2; cat "$GLADIO_LOG" >&2 || true; exit 1; }
+
+  unset LIBGL_ALWAYS_SOFTWARE GALLIUM_DRIVER MESA_LOADER_DRIVER_OVERRIDE
+  export GLADIO_X11_SERVER_PATH="$GLADIO_SOCKET"
+  export LD_LIBRARY_PATH="$GLADIO_CLIENT_BUILD${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+  GLADIO_PRELOAD="${GLADIO_WINE_PRELOAD:-$GLADIO_CLIENT_BUILD/libGL.so.1}"
+  printf 'wine-exe: renderer=gladio exe=%s socket=%s\n' "$EXE_PATH" "$GLADIO_SOCKET" >&2
+else
+# wined3d path: default GL = zink-on-Turnip HARDWARE (verified 2026-08-22,
+# glxinfo: Adreno 740 direct rendering). Opt into software GL only for
+# titles that misbehave on hardware OpenGL:
+if [[ "${WINE_FORCE_SOFTWARE_GL:-0}" == 1 ]]; then
+  export LIBGL_ALWAYS_SOFTWARE=1
+  export GALLIUM_DRIVER=llvmpipe
+fi
+fi
+
+# Single-instance guard: never start a second copy of the same exe, or two
+# WoW instances share one prefix and produce a black fullscreen window.
+# Match ONLY the actual wine binary running the exe (not this launcher's
+# own cmdline, which would self-match and block every launch).
+EXE_BASE="$(basename "$EXE_PATH")"
+if pgrep -f "wine-11\.11-amd64-wow64/bin/wine .*${EXE_BASE}" > /dev/null 2>&1; then
+  echo "wine-exe: $EXE_BASE already running; not starting a duplicate" >&2
+  exit 0
+fi
+
+cd "$(dirname "$EXE_PATH")"
+wine_env=()
+if [[ -n "$GLADIO_PRELOAD" ]]; then
+  wine_env+=("BOX64_LIBGL=$GLADIO_PRELOAD" "BOX64_LD_PRELOAD=$GLADIO_PRELOAD")
+fi
+exec ionice -c 2 -n 0 env "${wine_env[@]}" "$BOX64_BIN" "$WINE_BIN" "$EXE_PATH" "$@"
