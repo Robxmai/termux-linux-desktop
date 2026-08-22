@@ -50,3 +50,30 @@ Only three directions can move the number materially:
 1. A faster x86-on-ARM64 translator (Box64 updates, FEX-Emu when packaged).
 2. Blizzard-side init reduction (not applicable to 3.3.5a).
 3. Keeping the game resident and reconnecting (no supported mechanism).
+## Winlator comparison (why their 5 s doesn't map 1:1)
+
+Winlator reaches ~5 s loads on the same SoC class. Decomposing what it does
+differently, and what transfers:
+
+| Winlator practice | Transfers to our stack? |
+|---|---|
+| No proot — Wine exec'd through a thin bionic shim, no ptrace syscall tax | No (our whole stack is proot-based; replacing it is a rewrite) |
+| Single-app foreground: compute runs inside the top-app → Android EAS gives prime cores at high freq | Partially — see below; our compute lives in the Termux app while a *different* app (termux-x11) is foreground |
+| Per-launch CPU management (performance requests, big-core bias) | Tested: taskset pinning to cpus 4-7 showed **no improvement** within thermal variance; rootless frequency forcing unreliable |
+| Pre-warmed container templates (hot caches shipped) | Done — DynaCache + DXVK state/shader caches persist; prewarm autostart added |
+| Often lighter game copies / different measurement point ("window up" vs "login screen") | Unknown — repack quality varies wildly |
+
+### Additional measurements (2026-08-22 follow-up)
+* Process affinity is **not** restricted: `Cpus_allowed_list: 0-7`,
+  cgroup `foreground`.
+* Prime-core frequency parks at 864 MHz for most of the load and EAS does not
+  ramp it for our threads regardless of pinning or niced spinner load.
+* Run-to-run spread on identical configs is 29-43 s driven by SoC thermal
+  state — single-run A/Bs under ±6 s noise are meaningless.
+* Renderer choice (DXVK vs wined3d+zink) has no effect on load time.
+
+### Bottom line
+The transferable pieces are already in place (persistent wineserver, warm
+caches, clean prefixes). The remaining gap to Winlator-class startup is
+architectural: no-proot execution and top-app scheduling treatment. Neither
+is reachable by configuration from inside this stack.
